@@ -1,0 +1,24 @@
+import pygame
+
+FPS = 60
+
+# --- COLOR PALETTE ---
+BG_COLOR = (22, 24, 30)
+BOARD_BG_COLOR = (32, 35, 45)
+CELL_COLOR = (46, 50, 65)
+CELL_HOVER_COLOR = (62, 67, 88)
+GROOVE_COLOR = (26, 28, 36)
+
+CARD_BG_COLOR = (30, 33, 44)
+CARD_BORDER_INACTIVE = (48, 52, 68)
+
+WALL_COLOR = (255, 183, 3)          # Solid Gold
+GHOST_VALID_COLOR = (255, 183, 3, 140)
+GHOST_INVALID_COLOR = (230, 57, 70, 140)
+
+PLAYER_COLORS = {
+    1: (72, 202, 228),   # Cyan / Blue
+    2: (230, 57, 70),    # Red
+    3: (255, 209, 102),  # Yellow
+    4: (6, 214, 160)     # Green
+}
