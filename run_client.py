@@ -135,8 +135,8 @@ def main() -> None:
         run_cli_loop(client)
     else:
         try:
-            from ui.network_gui import QuoridorNetworkGUI
-            app = QuoridorNetworkGUI(client=client)
+            from ui.gui import QuoridorGUI
+            app = QuoridorGUI(client=client)
             app.run()
         except Exception as exc:
             logger.error("Erro na interface gráfica: %s", exc)
