@@ -201,6 +201,12 @@ class QuoridorNetworkGUI(QuoridorGUI):
                 if event.type == pygame.QUIT:
                     running = False
 
+                elif event.type == pygame.VIDEORESIZE:
+                    new_w = max(640, event.w)
+                    new_h = max(480, event.h)
+                    self.screen = pygame.display.set_mode((new_w, new_h), pygame.RESIZABLE)
+                    self.update_dimensions(new_w, new_h)
+
                 elif event.type == pygame.KEYDOWN:
                     if event.key == pygame.K_ESCAPE:
                         running = False

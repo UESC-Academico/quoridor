@@ -1,0 +1,9 @@
+venv/
+__pycache__/
+ui/__pycache__/
+core/__pycache__/
+network/__pycache__/
+test/__pycache__/
+*.pyc
+*.pyo
+*.pyd

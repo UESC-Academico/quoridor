@@ -14,7 +14,7 @@ class QuoridorGUI:
         info = pygame.display.Info()
         initial_w = int(info.current_w * 0.90)
         initial_h = int(info.current_h * 0.88)
-        self.screen = pygame.display.set_mode((initial_w, initial_h))
+        self.screen = pygame.display.set_mode((initial_w, initial_h), pygame.RESIZABLE)
         pygame.display.set_caption("Quoridor")
         self.clock = pygame.time.Clock()
 
@@ -355,6 +355,12 @@ class QuoridorGUI:
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     running = False
+
+                elif event.type == pygame.VIDEORESIZE:
+                    new_w = max(640, event.w)
+                    new_h = max(480, event.h)
+                    self.screen = pygame.display.set_mode((new_w, new_h), pygame.RESIZABLE)
+                    self.update_dimensions(new_w, new_h)
 
                 elif event.type == pygame.KEYDOWN:
                     if event.key == pygame.K_ESCAPE:
