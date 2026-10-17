@@ -1,11 +1,14 @@
 import argparse
 import sys
+
 from network.config import DEFAULT_NS_HOST, DEFAULT_NS_PORT, DEFAULT_SERVER_NAME, logger
 from network.server import start_server
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Servidor Pyro5 para Quoridor Multiplayer")
+    parser = argparse.ArgumentParser(
+        description="Servidor Pyro5 para Quoridor Multiplayer"
+    )
     parser.add_argument(
         "--server-name",
         type=str,
@@ -45,7 +48,7 @@ def main() -> None:
     args = parser.parse_args()
 
     try:
-        daemon, server_instance, ns_thread = start_server(
+        daemon, _server_instance, _ns_thread = start_server(
             server_name=args.server_name,
             host=args.host,
             port=args.port,
@@ -53,13 +56,15 @@ def main() -> None:
             ns_port=args.ns_port,
             auto_start_ns=not args.no_auto_ns,
         )
-        logger.info("Servidor ativo e pronto para receber conexões. Pressione Ctrl+C para encerrar.")
+        logger.info(
+            "Servidor ativo e pronto para receber conexões. Pressione Ctrl+C para encerrar."
+        )
         daemon.requestLoop()
     except KeyboardInterrupt:
         logger.info("Encerrando servidor...")
         daemon.shutdown()
         sys.exit(0)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         logger.error("Erro fatal ao executar o servidor: %s", exc)
         sys.exit(1)
 

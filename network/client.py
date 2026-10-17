@@ -1,9 +1,12 @@
 from __future__ import annotations
-import logging
+
 import threading
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
+
 import Pyro5.api
 import Pyro5.errors
+
 from network.config import (
     DEFAULT_NS_HOST,
     DEFAULT_NS_PORT,
@@ -29,14 +32,18 @@ class GameClientCallback:
         self, player_info: dict[str, Any], lobby_players: list[dict[str, Any]]
     ) -> None:
         """Callback acionado quando um novo jogador entra na sala."""
-        self.client._handle_event("player_joined", {"player": player_info, "lobby": lobby_players})
+        self.client._handle_event(
+            "player_joined", {"player": player_info, "lobby": lobby_players}
+        )
 
     @Pyro5.api.oneway
     def on_player_left(
         self, player_id: int, lobby_players: list[dict[str, Any]]
     ) -> None:
         """Callback acionado quando um jogador sai da sala."""
-        self.client._handle_event("player_left", {"player_id": player_id, "lobby": lobby_players})
+        self.client._handle_event(
+            "player_left", {"player_id": player_id, "lobby": lobby_players}
+        )
 
     @Pyro5.api.oneway
     def on_game_started(self, initial_state: dict[str, Any]) -> None:
@@ -44,9 +51,13 @@ class GameClientCallback:
         self.client._handle_event("game_started", initial_state)
 
     @Pyro5.api.oneway
-    def on_game_state_changed(self, game_state: dict[str, Any], message: str = "") -> None:
+    def on_game_state_changed(
+        self, game_state: dict[str, Any], message: str = ""
+    ) -> None:
         """Callback acionado sempre que o estado do jogo se altera (jogadas, paredes, etc.)."""
-        self.client._handle_event("state_changed", {"state": game_state, "message": message})
+        self.client._handle_event(
+            "state_changed", {"state": game_state, "message": message}
+        )
 
     @Pyro5.api.oneway
     def on_game_over(
@@ -114,7 +125,11 @@ class QuoridorClient:
     def _handle_event(self, event_type: str, data: Any) -> None:
         """Processa eventos recebidos via callbacks do Pyro5 e despacha aos ouvintes registrados."""
         with self._lock:
-            if event_type == "state_changed" and isinstance(data, dict) and "state" in data:
+            if (
+                event_type == "state_changed"
+                and isinstance(data, dict)
+                and "state" in data
+            ):
                 self.latest_state = data["state"]
             elif event_type in ("game_started", "game_over"):
                 if isinstance(data, dict) and "state" in data:
@@ -127,8 +142,12 @@ class QuoridorClient:
         for listener in listeners_copy:
             try:
                 listener(event_type, data)
-            except Exception as exc:
-                logger.error("Erro no processamento do ouvinte para o evento '%s': %s", event_type, exc)
+            except Exception as exc:  # noqa: BLE001
+                logger.error(
+                    "Erro no processamento do ouvinte para o evento '%s': %s",
+                    event_type,
+                    exc,
+                )
 
     def connect(self) -> dict[str, Any]:
         """Inicializa o Daemon secundário de callback, resolve o servidor via Name Server
@@ -150,11 +169,12 @@ class QuoridorClient:
         self.daemon_thread.start()
         logger.info(
             "Daemon do cliente inicializado em thread secundária. Callback URI: %s",
-            self.callback_uri
+            self.callback_uri,
         )
 
         # 2. Conecta ao servidor via resolução do Name Server (PYRONAME)
         from Pyro5.api import config
+
         if self.ns_host:
             config.NS_HOST = self.ns_host
         if self.ns_port:
@@ -169,7 +189,9 @@ class QuoridorClient:
         self.server_proxy._pyroTimeout = 10.0
 
         # 3. Registra o jogador no servidor enviando o URI de callback
-        result = self.server_proxy.register_player(self.player_name, str(self.callback_uri))
+        result = self.server_proxy.register_player(
+            self.player_name, str(self.callback_uri)
+        )
         self.player_id = result["player_id"]
 
         with self._lock:
@@ -178,7 +200,8 @@ class QuoridorClient:
 
         logger.info(
             "Conectado com sucesso ao servidor '%s'! Atribuído Player ID: %d",
-            self.server_name, self.player_id
+            self.server_name,
+            self.player_id,
         )
         return result
 
@@ -194,14 +217,16 @@ class QuoridorClient:
         """Solicita ao servidor o início da partida."""
         try:
             return self._call_remote("start_game", self.player_id)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             return False, str(exc)
 
-    def move_player(self, new_position: tuple[int, int] | list[int]) -> tuple[bool, str]:
+    def move_player(
+        self, new_position: tuple[int, int] | list[int]
+    ) -> tuple[bool, str]:
         """Envia solicitação de movimentação do peão para o servidor."""
         try:
             return self._call_remote("move_player", self.player_id, list(new_position))
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             return False, str(exc)
 
     def place_wall(
@@ -209,8 +234,10 @@ class QuoridorClient:
     ) -> tuple[bool, str]:
         """Envia solicitação de posicionamento de parede para o servidor."""
         try:
-            return self._call_remote("place_wall", self.player_id, list(position), orientation)
-        except Exception as exc:
+            return self._call_remote(
+                "place_wall", self.player_id, list(position), orientation
+            )
+        except Exception as exc:  # noqa: BLE001
             return False, str(exc)
 
     def get_valid_moves(self) -> list[tuple[int, int]]:
@@ -218,7 +245,7 @@ class QuoridorClient:
         try:
             moves = self._call_remote("get_valid_moves", self.player_id)
             return [tuple(m) for m in moves]
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             logger.error("Erro ao consultar movimentos válidos: %s", exc)
             return []
 
@@ -231,7 +258,7 @@ class QuoridorClient:
         """Solicita o reinício da partida."""
         try:
             return self._call_remote("reset_game", self.player_id)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             return False, str(exc)
 
     def disconnect(self) -> None:
@@ -252,19 +279,19 @@ class QuoridorClient:
             try:
                 proxy._pyroClaimOwnership()
                 proxy.unregister_player(player_id)
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001
                 logger.debug("Aviso ao desregistrar do servidor: %s", exc)
             finally:
                 try:
                     proxy._pyroRelease()
-                except Exception:
-                    pass
+                except (Pyro5.errors.PyroError, OSError) as exc:
+                    logger.debug("Aviso ao liberar proxy: %s", exc)
 
         # Desliga o Daemon de callback
         if daemon:
             try:
                 daemon.shutdown()
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001
                 logger.debug("Aviso ao desligar daemon do cliente: %s", exc)
 
         logger.info("Cliente desconectado com sucesso.")

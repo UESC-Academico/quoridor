@@ -1,6 +1,8 @@
 from __future__ import annotations
+
 import sys
 from typing import TYPE_CHECKING
+
 import pygame
 
 from core.game import QuoridorGame
@@ -16,7 +18,9 @@ if TYPE_CHECKING:
 class QuoridorGUI:
     """Interface gráfica unificada do Quoridor (suporta modo local e multiplayer em rede)."""
 
-    def __init__(self, num_players: int = 2, client: QuoridorClient | None = None) -> None:
+    def __init__(
+        self, num_players: int = 2, client: QuoridorClient | None = None
+    ) -> None:
         pygame.init()
 
         self.client = client
@@ -30,7 +34,9 @@ class QuoridorGUI:
         self.screen = pygame.display.set_mode((initial_w, initial_h), pygame.RESIZABLE)
 
         if self.is_network and self.client:
-            pygame.display.set_caption(f"Quoridor Multiplayer - {self.client.player_name} (P{self.client.player_id})")
+            pygame.display.set_caption(
+                f"Quoridor Multiplayer - {self.client.player_name} (P{self.client.player_id})"
+            )
         else:
             pygame.display.set_caption("Quoridor")
         self.clock = pygame.time.Clock()
@@ -40,9 +46,11 @@ class QuoridorGUI:
         self.update_dimensions(current_w, current_h)
 
         # Estado da GUI
-        self.input_mode: str = 'PAWN'  # 'PAWN' ou 'WALL'
-        self.wall_orientation: str = 'H'  # 'H' ou 'V'
-        self.status_message: str = "Pressione SPACE para habilitar posicionamento de parede"
+        self.input_mode: str = "PAWN"  # 'PAWN' ou 'WALL'
+        self.wall_orientation: str = "H"  # 'H' ou 'V'
+        self.status_message: str = (
+            "Pressione SPACE para habilitar posicionamento de parede"
+        )
         self.status_color = (200, 205, 220)
         self.error_message_time = 0
 
@@ -108,9 +116,11 @@ class QuoridorGUI:
             for i in range(1, self.num_players + 1):
                 self.game.add_player(f"Jogador {i}")
             self.game.game_started = True
-            self.status_message = "Pressione SPACE para habilitar posicionamento de parede"
-            self.input_mode = 'PAWN'
-            self.wall_orientation = 'H'
+            self.status_message = (
+                "Pressione SPACE para habilitar posicionamento de parede"
+            )
+            self.input_mode = "PAWN"
+            self.wall_orientation = "H"
             self.error_message_time = 0
 
     # --- Cálculos Geométricos e Responsividade ---
@@ -132,11 +142,21 @@ class QuoridorGUI:
         self.offset_y = (self.screen_height - self.board_size) // 2 - 20
 
         # Fontes responsivas
-        self.font_title = pygame.font.SysFont("arial", max(16, int(self.cell_size * 0.46)), bold=True)
-        self.font_card_name = pygame.font.SysFont("arial", max(14, int(self.cell_size * 0.36)), bold=True)
-        self.font_hud = pygame.font.SysFont("arial", max(12, int(self.cell_size * 0.28)), bold=True)
-        self.font_pawn = pygame.font.SysFont("arial", max(13, int(self.cell_size * 0.36)), bold=True)
-        self.font_small = pygame.font.SysFont("arial", max(10, int(self.cell_size * 0.24)))
+        self.font_title = pygame.font.SysFont(
+            "arial", max(16, int(self.cell_size * 0.46)), bold=True
+        )
+        self.font_card_name = pygame.font.SysFont(
+            "arial", max(14, int(self.cell_size * 0.36)), bold=True
+        )
+        self.font_hud = pygame.font.SysFont(
+            "arial", max(12, int(self.cell_size * 0.28)), bold=True
+        )
+        self.font_pawn = pygame.font.SysFont(
+            "arial", max(13, int(self.cell_size * 0.36)), bold=True
+        )
+        self.font_small = pygame.font.SysFont(
+            "arial", max(10, int(self.cell_size * 0.24))
+        )
 
     def get_cell_rect(self, row: int, col: int) -> pygame.Rect:
         """Retorna o retângulo de uma célula (row, col) em pixels."""
@@ -149,7 +169,7 @@ class QuoridorGUI:
         x = self.offset_x + col * (self.cell_size + self.groove_size)
         y = self.offset_y + row * (self.cell_size + self.groove_size)
 
-        if orientation == 'H':
+        if orientation == "H":
             wall_x = x
             wall_y = y + self.cell_size
             wall_width = 2 * self.cell_size + self.groove_size
@@ -171,15 +191,27 @@ class QuoridorGUI:
                     return (r, c)
         return None
 
-    def get_hovered_wall_slot(self, mouse_pos: tuple[int, int]) -> tuple[int, int] | None:
+    def get_hovered_wall_slot(
+        self, mouse_pos: tuple[int, int]
+    ) -> tuple[int, int] | None:
         """Localiza a interseção de parede (0-7, 0-7) mais próxima do cursor."""
         mx, my = mouse_pos
         threshold = self.cell_size // 2 + self.groove_size
 
         for r in range(8):
             for c in range(8):
-                center_x = self.offset_x + c * (self.cell_size + self.groove_size) + self.cell_size + self.groove_size // 2
-                center_y = self.offset_y + r * (self.cell_size + self.groove_size) + self.cell_size + self.groove_size // 2
+                center_x = (
+                    self.offset_x
+                    + c * (self.cell_size + self.groove_size)
+                    + self.cell_size
+                    + self.groove_size // 2
+                )
+                center_y = (
+                    self.offset_y
+                    + r * (self.cell_size + self.groove_size)
+                    + self.cell_size
+                    + self.groove_size // 2
+                )
 
                 distance = ((mx - center_x) ** 2 + (my - center_y) ** 2) ** 0.5
                 if distance <= threshold:
@@ -190,54 +222,84 @@ class QuoridorGUI:
 
     def draw_player_card(self, player, rect: pygame.Rect) -> None:
         """Renderiza o card lateral de um jogador."""
-        is_turn = (self.game.turn == player.id and not self.game.winner)
+        is_turn = self.game.turn == player.id and not self.game.winner
         color = PLAYER_COLORS.get(player.id, (255, 255, 255))
         border_color = color if is_turn else CARD_BORDER_INACTIVE
         border_width = 3 if is_turn else 1
 
         # Moldura do card
         pygame.draw.rect(self.screen, CARD_BG_COLOR, rect, border_radius=12)
-        pygame.draw.rect(self.screen, border_color, rect, width=border_width, border_radius=12)
+        pygame.draw.rect(
+            self.screen, border_color, rect, width=border_width, border_radius=12
+        )
 
         # Avatar
         avatar_radius = max(14, int(self.cell_size * 0.32))
         avatar_center = (rect.x + avatar_radius + 18, rect.y + avatar_radius + 18)
-        draw_smooth_circle(self.screen, avatar_center, avatar_radius, color, border_color=(15, 17, 22), border_width=2)
+        draw_smooth_circle(
+            self.screen,
+            avatar_center,
+            avatar_radius,
+            color,
+            border_color=(15, 17, 22),
+            border_width=2,
+        )
         avatar_label = self.font_hud.render(f"P{player.id}", True, (15, 17, 22))
         self.screen.blit(avatar_label, avatar_label.get_rect(center=avatar_center))
 
         # Nome
-        is_me = (self.is_network and self.client and player.id == self.client.player_id)
+        is_me = self.is_network and self.client and player.id == self.client.player_id
         display_name = f"{player.name} (Você)" if is_me else player.name
         name_surf = self.font_card_name.render(display_name, True, (240, 242, 250))
-        self.screen.blit(name_surf, (avatar_center[0] + avatar_radius + 16, rect.y + 20))
+        self.screen.blit(
+            name_surf, (avatar_center[0] + avatar_radius + 16, rect.y + 20)
+        )
 
         # Indicador de turno
         status_str = "SUA VEZ" if is_turn else "AGUARDANDO"
         status_color = color if is_turn else (120, 125, 145)
         status_surf = self.font_small.render(status_str, True, status_color)
-        self.screen.blit(status_surf, (avatar_center[0] + avatar_radius + 16, rect.y + 52))
+        self.screen.blit(
+            status_surf, (avatar_center[0] + avatar_radius + 16, rect.y + 52)
+        )
 
         # Divisor
         divider_y = rect.y + int(rect.height * 0.50)
-        pygame.draw.line(self.screen, (45, 48, 62), (rect.x + 18, divider_y), (rect.right - 18, divider_y), 1)
+        pygame.draw.line(
+            self.screen,
+            (45, 48, 62),
+            (rect.x + 18, divider_y),
+            (rect.right - 18, divider_y),
+            1,
+        )
 
         # Texto de paredes
         walls_text = f"Paredes: {player.remaining_walls} / {self.game.walls_per_player}"
         walls_surf = self.font_hud.render(walls_text, True, (210, 215, 230))
-        self.screen.blit(walls_surf, (rect.x + (rect.width - walls_surf.get_width()) // 2, divider_y + 12))
+        self.screen.blit(
+            walls_surf,
+            (rect.x + (rect.width - walls_surf.get_width()) // 2, divider_y + 12),
+        )
 
         # Barras de contagem de paredes
         block_w = max(10, int(self.cell_size * 0.22))
         block_h = max(12, int(self.cell_size * 0.26))
         gap = max(3, int(self.cell_size * 0.06))
-        total_blocks_w = self.game.walls_per_player * block_w + (self.game.walls_per_player - 1) * gap
+        total_blocks_w = (
+            self.game.walls_per_player * block_w
+            + (self.game.walls_per_player - 1) * gap
+        )
         start_x = rect.x + (rect.width - total_blocks_w) // 2
         bar_y = divider_y + 40
 
         for i in range(self.game.walls_per_player):
             block_color = color if i < player.remaining_walls else (45, 48, 62)
-            pygame.draw.rect(self.screen, block_color, (start_x, bar_y, block_w, block_h), border_radius=2)
+            pygame.draw.rect(
+                self.screen,
+                block_color,
+                (start_x, bar_y, block_w, block_h),
+                border_radius=2,
+            )
             start_x += block_w + gap
 
     def draw_sidebars(self) -> None:
@@ -249,19 +311,41 @@ class QuoridorGUI:
 
         if self.game.num_players == 2:
             center_y = self.offset_y + (self.board_size - card_height) // 2
-            self.draw_player_card(self.game.players[1], pygame.Rect(left_x, center_y, side_width, card_height))
-            self.draw_player_card(self.game.players[2], pygame.Rect(right_x, center_y, side_width, card_height))
+            self.draw_player_card(
+                self.game.players[1],
+                pygame.Rect(left_x, center_y, side_width, card_height),
+            )
+            self.draw_player_card(
+                self.game.players[2],
+                pygame.Rect(right_x, center_y, side_width, card_height),
+            )
 
         elif self.game.num_players == 4:
             gap = 18
             total_h = 2 * card_height + gap
             start_y = self.offset_y + (self.board_size - total_h) // 2
 
-            self.draw_player_card(self.game.players[1], pygame.Rect(left_x, start_y, side_width, card_height))
-            self.draw_player_card(self.game.players[3], pygame.Rect(left_x, start_y + card_height + gap, side_width, card_height))
+            self.draw_player_card(
+                self.game.players[1],
+                pygame.Rect(left_x, start_y, side_width, card_height),
+            )
+            self.draw_player_card(
+                self.game.players[3],
+                pygame.Rect(
+                    left_x, start_y + card_height + gap, side_width, card_height
+                ),
+            )
 
-            self.draw_player_card(self.game.players[2], pygame.Rect(right_x, start_y, side_width, card_height))
-            self.draw_player_card(self.game.players[4], pygame.Rect(right_x, start_y + card_height + gap, side_width, card_height))
+            self.draw_player_card(
+                self.game.players[2],
+                pygame.Rect(right_x, start_y, side_width, card_height),
+            )
+            self.draw_player_card(
+                self.game.players[4],
+                pygame.Rect(
+                    right_x, start_y + card_height + gap, side_width, card_height
+                ),
+            )
 
     def draw_target_goal_edge(self) -> None:
         """Destaca com a cor do jogador o objetivo de linha que ele deve alcançar."""
@@ -276,24 +360,49 @@ class QuoridorGUI:
             if current.target_value == 8:
                 # Linha de baixo (P1)
                 y = self.offset_y + self.board_size + 4
-                pygame.draw.rect(self.screen, color, (self.offset_x, y, self.board_size, edge_thickness), border_radius=3)
+                pygame.draw.rect(
+                    self.screen,
+                    color,
+                    (self.offset_x, y, self.board_size, edge_thickness),
+                    border_radius=3,
+                )
             elif current.target_value == 0:
                 # Linha de cima (P2)
                 y = self.offset_y - edge_thickness - 4
-                pygame.draw.rect(self.screen, color, (self.offset_x, y, self.board_size, edge_thickness), border_radius=3)
+                pygame.draw.rect(
+                    self.screen,
+                    color,
+                    (self.offset_x, y, self.board_size, edge_thickness),
+                    border_radius=3,
+                )
         elif current.target_axis == 1:
             if current.target_value == 8:
                 # Linha da direita (P3)
                 x = self.offset_x + self.board_size + 4
-                pygame.draw.rect(self.screen, color, (x, self.offset_y, edge_thickness, self.board_size), border_radius=3)
+                pygame.draw.rect(
+                    self.screen,
+                    color,
+                    (x, self.offset_y, edge_thickness, self.board_size),
+                    border_radius=3,
+                )
             elif current.target_value == 0:
                 # Linha da esquerda (P4)
                 x = self.offset_x - edge_thickness - 4
-                pygame.draw.rect(self.screen, color, (x, self.offset_y, edge_thickness, self.board_size), border_radius=3)
+                pygame.draw.rect(
+                    self.screen,
+                    color,
+                    (x, self.offset_y, edge_thickness, self.board_size),
+                    border_radius=3,
+                )
 
     def draw_board(self, mouse_pos: tuple[int, int]) -> None:
         """Renderiza o tabuleiro, células, movimentos válidos, paredes e peões."""
-        board_rect = pygame.Rect(self.offset_x - 12, self.offset_y - 12, self.board_size + 24, self.board_size + 24)
+        board_rect = pygame.Rect(
+            self.offset_x - 12,
+            self.offset_y - 12,
+            self.board_size + 24,
+            self.board_size + 24,
+        )
         pygame.draw.rect(self.screen, BOARD_BG_COLOR, board_rect, border_radius=10)
 
         # Destaca borda alvo
@@ -301,7 +410,9 @@ class QuoridorGUI:
 
         current_player = self.game.players[self.game.turn]
         current_color = PLAYER_COLORS.get(current_player.id, (255, 255, 255))
-        valid_moves = self.game.get_valid_moves(current_player.id) if not self.game.winner else []
+        valid_moves = (
+            self.game.get_valid_moves(current_player.id) if not self.game.winner else []
+        )
         hovered_cell = self.get_hovered_cell(mouse_pos)
 
         # 1. Células
@@ -313,8 +424,18 @@ class QuoridorGUI:
 
                 # Projeção de movimentos válidos
                 if (r, c) in valid_moves:
-                    draw_smooth_circle(self.screen, rect.center, int(self.cell_size * 0.22), (*current_color, 150))
-                    draw_smooth_circle(self.screen, rect.center, int(self.cell_size * 0.10), current_color)
+                    draw_smooth_circle(
+                        self.screen,
+                        rect.center,
+                        int(self.cell_size * 0.22),
+                        (*current_color, 150),
+                    )
+                    draw_smooth_circle(
+                        self.screen,
+                        rect.center,
+                        int(self.cell_size * 0.10),
+                        current_color,
+                    )
 
         # 2. Paredes já posicionadas
         for wall in self.game.walls:
@@ -325,7 +446,7 @@ class QuoridorGUI:
         # 3. Preview de Parede (Ghost)
         hovered_wall_slot = self.get_hovered_wall_slot(mouse_pos)
         can_show_ghost = (
-            self.input_mode == 'WALL'
+            self.input_mode == "WALL"
             and hovered_wall_slot is not None
             and not self.game.winner
             and current_player.remaining_walls > 0
@@ -339,7 +460,9 @@ class QuoridorGUI:
             ghost_color = GHOST_VALID_COLOR if can_place else GHOST_INVALID_COLOR
             ghost_rect = self.get_wall_rect(hr, hc, self.wall_orientation)
 
-            ghost_surface = pygame.Surface((ghost_rect.width, ghost_rect.height), pygame.SRCALPHA)
+            ghost_surface = pygame.Surface(
+                (ghost_rect.width, ghost_rect.height), pygame.SRCALPHA
+            )
             ghost_surface.fill(ghost_color)
             self.screen.blit(ghost_surface, ghost_rect.topleft)
 
@@ -350,7 +473,14 @@ class QuoridorGUI:
             color = PLAYER_COLORS.get(player.id, (255, 255, 255))
             radius = self.cell_size // 2 - 8
 
-            draw_smooth_circle(self.screen, center, radius, color, border_color=(15, 17, 22), border_width=3)
+            draw_smooth_circle(
+                self.screen,
+                center,
+                radius,
+                color,
+                border_color=(15, 17, 22),
+                border_width=3,
+            )
             label_surf = self.font_pawn.render(f"P{player.id}", True, (15, 17, 22))
             self.screen.blit(label_surf, label_surf.get_rect(center=center))
 
@@ -364,11 +494,23 @@ class QuoridorGUI:
             color = PLAYER_COLORS.get(winner.id, (255, 255, 255))
             win_text = f"{winner.name} venceu a partida!"
             win_surf = self.font_title.render(win_text, True, color)
-            self.screen.blit(win_surf, (self.screen_width // 2 - win_surf.get_width() // 2, self.offset_y - 50))
+            self.screen.blit(
+                win_surf,
+                (
+                    self.screen_width // 2 - win_surf.get_width() // 2,
+                    self.offset_y - 50,
+                ),
+            )
 
             hint_text = "Pressione ENTER para jogar novamente"
             hint_surf = self.font_hud.render(hint_text, True, (200, 205, 220))
-            self.screen.blit(hint_surf, (self.screen_width // 2 - hint_surf.get_width() // 2, self.offset_y + self.board_size + 24))
+            self.screen.blit(
+                hint_surf,
+                (
+                    self.screen_width // 2 - hint_surf.get_width() // 2,
+                    self.offset_y + self.board_size + 24,
+                ),
+            )
             return
 
         # Cabeçalho de Turno
@@ -376,18 +518,33 @@ class QuoridorGUI:
         current_color = PLAYER_COLORS.get(current.id, (255, 255, 255))
 
         if self.is_network and self.client:
-            is_my_turn = (self.game.turn == self.client.player_id)
-            turn_text = f"SUA VEZ! ({current.name})" if is_my_turn else f"Vez de {current.name} (Aguardando...)"
+            is_my_turn = self.game.turn == self.client.player_id
+            turn_text = (
+                f"SUA VEZ! ({current.name})"
+                if is_my_turn
+                else f"Vez de {current.name} (Aguardando...)"
+            )
         else:
             turn_text = f"Vez de {current.name}"
 
         turn_surf = self.font_title.render(turn_text, True, current_color)
-        self.screen.blit(turn_surf, (self.screen_width // 2 - turn_surf.get_width() // 2, self.offset_y - 50))
+        self.screen.blit(
+            turn_surf,
+            (self.screen_width // 2 - turn_surf.get_width() // 2, self.offset_y - 50),
+        )
 
         # Mensagem de Status Inferior
         if self.status_message:
-            msg_surf = self.font_hud.render(self.status_message, True, self.status_color)
-            self.screen.blit(msg_surf, (self.screen_width // 2 - msg_surf.get_width() // 2, self.offset_y + self.board_size + 24))
+            msg_surf = self.font_hud.render(
+                self.status_message, True, self.status_color
+            )
+            self.screen.blit(
+                msg_surf,
+                (
+                    self.screen_width // 2 - msg_surf.get_width() // 2,
+                    self.offset_y + self.board_size + 24,
+                ),
+            )
 
     def draw_lobby(self) -> None:
         """Renderiza a sala de espera (lobby) no modo multiplayer."""
@@ -400,13 +557,27 @@ class QuoridorGUI:
         count = len(lobby_players)
 
         # Título do Lobby
-        title_surf = self.font_title.render("SALA MULTIPLAYER - QUORIDOR", True, (255, 183, 3))
-        self.screen.blit(title_surf, (self.screen_width // 2 - title_surf.get_width() // 2, self.screen_height // 4))
+        title_surf = self.font_title.render(
+            "SALA MULTIPLAYER - QUORIDOR", True, (255, 183, 3)
+        )
+        self.screen.blit(
+            title_surf,
+            (
+                self.screen_width // 2 - title_surf.get_width() // 2,
+                self.screen_height // 4,
+            ),
+        )
 
         # Subtítulo com contagem
         count_str = f"Jogadores conectados: {count} / 4  (Mínimo 2, Máximo 4)"
         count_surf = self.font_card_name.render(count_str, True, (210, 215, 230))
-        self.screen.blit(count_surf, (self.screen_width // 2 - count_surf.get_width() // 2, self.screen_height // 4 + 50))
+        self.screen.blit(
+            count_surf,
+            (
+                self.screen_width // 2 - count_surf.get_width() // 2,
+                self.screen_height // 4 + 50,
+            ),
+        )
 
         # Lista de jogadores no Lobby
         card_w = min(400, int(self.screen_width * 0.45))
@@ -416,24 +587,39 @@ class QuoridorGUI:
         for idx, p in enumerate(lobby_players):
             pid = p["id"]
             pname = p["name"]
-            is_me = (pid == self.client.player_id)
+            is_me = pid == self.client.player_id
             color = PLAYER_COLORS.get(pid, (255, 255, 255))
 
-            rect = pygame.Rect((self.screen_width - card_w) // 2, start_y + idx * (card_h + 12), card_w, card_h)
+            rect = pygame.Rect(
+                (self.screen_width - card_w) // 2,
+                start_y + idx * (card_h + 12),
+                card_w,
+                card_h,
+            )
             pygame.draw.rect(self.screen, CARD_BG_COLOR, rect, border_radius=8)
             border_c = color if is_me else CARD_BORDER_INACTIVE
             pygame.draw.rect(self.screen, border_c, rect, width=2, border_radius=8)
 
             # Avatar
             avatar_center = (rect.x + 30, rect.centery)
-            draw_smooth_circle(self.screen, avatar_center, 18, color, border_color=(15, 17, 22), border_width=2)
+            draw_smooth_circle(
+                self.screen,
+                avatar_center,
+                18,
+                color,
+                border_color=(15, 17, 22),
+                border_width=2,
+            )
             lbl = self.font_small.render(f"P{pid}", True, (15, 17, 22))
             self.screen.blit(lbl, lbl.get_rect(center=avatar_center))
 
             # Nome
             display_name = f"{pname} (Você)" if is_me else pname
             name_surf = self.font_card_name.render(display_name, True, (240, 242, 250))
-            self.screen.blit(name_surf, (avatar_center[0] + 30, rect.centery - name_surf.get_height() // 2))
+            self.screen.blit(
+                name_surf,
+                (avatar_center[0] + 30, rect.centery - name_surf.get_height() // 2),
+            )
 
         # Instruções de Início
         instruction_y = start_y + 4 * (card_h + 12) + 20
@@ -445,7 +631,10 @@ class QuoridorGUI:
             msg_color = (255, 209, 102)
 
         inst_surf = self.font_card_name.render(msg, True, msg_color)
-        self.screen.blit(inst_surf, (self.screen_width // 2 - inst_surf.get_width() // 2, instruction_y))
+        self.screen.blit(
+            inst_surf,
+            (self.screen_width // 2 - inst_surf.get_width() // 2, instruction_y),
+        )
 
     # --- Tratamento de Input ---
 
@@ -455,14 +644,16 @@ class QuoridorGUI:
             return
 
         if self.is_network and self.client and self.game.turn != self.client.player_id:
-            self.status_message = f"Não é a sua vez! Aguarde a jogada do Jogador {self.game.turn}."
+            self.status_message = (
+                f"Não é a sua vez! Aguarde a jogada do Jogador {self.game.turn}."
+            )
             self.status_color = (230, 57, 70)
             self.error_message_time = pygame.time.get_ticks()
             return
 
         current_player = self.game.players[self.game.turn]
 
-        if self.input_mode == 'PAWN':
+        if self.input_mode == "PAWN":
             clicked_cell = self.get_hovered_cell(mouse_pos)
             if clicked_cell:
                 if self.is_network and self.client:
@@ -476,11 +667,13 @@ class QuoridorGUI:
                 else:
                     valid_moves = self.game.get_valid_moves(current_player.id)
                     if clicked_cell in valid_moves:
-                        success, msg = self.game.move_player(current_player.id, clicked_cell)
+                        success, msg = self.game.move_player(
+                            current_player.id, clicked_cell
+                        )
                         if success:
                             self.status_message = (
                                 "Pressione SPACE para desabilitar posicionamento de parede"
-                                if self.input_mode == 'WALL'
+                                if self.input_mode == "WALL"
                                 else "Pressione SPACE para habilitar posicionamento de parede"
                             )
                             self.status_color = (200, 205, 220)
@@ -490,7 +683,7 @@ class QuoridorGUI:
                             self.status_color = (230, 57, 70)
                             self.error_message_time = pygame.time.get_ticks()
 
-        elif self.input_mode == 'WALL':
+        elif self.input_mode == "WALL":
             clicked_wall_slot = self.get_hovered_wall_slot(mouse_pos)
             if clicked_wall_slot:
                 if current_player.remaining_walls <= 0:
@@ -500,7 +693,9 @@ class QuoridorGUI:
                     return
 
                 if self.is_network and self.client:
-                    success, msg = self.client.place_wall(clicked_wall_slot, self.wall_orientation)
+                    success, msg = self.client.place_wall(
+                        clicked_wall_slot, self.wall_orientation
+                    )
                     if not success:
                         self.status_message = msg
                         self.status_color = (230, 57, 70)
@@ -511,7 +706,7 @@ class QuoridorGUI:
                     if success:
                         self.status_message = (
                             "Pressione SPACE para desabilitar posicionamento de parede"
-                            if self.input_mode == 'WALL'
+                            if self.input_mode == "WALL"
                             else "Pressione SPACE para habilitar posicionamento de parede"
                         )
                         self.status_color = (200, 205, 220)
@@ -527,10 +722,13 @@ class QuoridorGUI:
         while running:
             mouse_pos = pygame.mouse.get_pos()
 
-            if self.error_message_time > 0 and pygame.time.get_ticks() - self.error_message_time > 3000:
+            if (
+                self.error_message_time > 0
+                and pygame.time.get_ticks() - self.error_message_time > 3000
+            ):
                 self.status_message = (
                     "Pressione SPACE para desabilitar posicionamento de parede"
-                    if self.input_mode == 'WALL'
+                    if self.input_mode == "WALL"
                     else "Pressione SPACE para habilitar posicionamento de parede"
                 )
                 self.status_color = (200, 205, 220)
@@ -543,14 +741,20 @@ class QuoridorGUI:
                 elif event.type == pygame.VIDEORESIZE:
                     new_w = max(640, event.w)
                     new_h = max(480, event.h)
-                    self.screen = pygame.display.set_mode((new_w, new_h), pygame.RESIZABLE)
+                    self.screen = pygame.display.set_mode(
+                        (new_w, new_h), pygame.RESIZABLE
+                    )
                     self.update_dimensions(new_w, new_h)
 
                 elif event.type == pygame.KEYDOWN:
                     if event.key == pygame.K_ESCAPE:
                         running = False
 
-                    elif event.key in (pygame.K_RETURN, pygame.K_SPACE) and self.is_network and not self.game.game_started:
+                    elif (
+                        event.key in (pygame.K_RETURN, pygame.K_SPACE)
+                        and self.is_network
+                        and not self.game.game_started
+                    ):
                         if self.client:
                             ok, msg = self.client.start_game()
                             if not ok:
@@ -559,13 +763,17 @@ class QuoridorGUI:
                                 self.error_message_time = pygame.time.get_ticks()
 
                     elif event.key == pygame.K_r:
-                        self.wall_orientation = 'V' if self.wall_orientation == 'H' else 'H'
+                        self.wall_orientation = (
+                            "V" if self.wall_orientation == "H" else "H"
+                        )
 
                     elif event.key == pygame.K_SPACE and self.game.game_started:
-                        self.input_mode = 'WALL' if self.input_mode == 'PAWN' else 'PAWN'
+                        self.input_mode = (
+                            "WALL" if self.input_mode == "PAWN" else "PAWN"
+                        )
                         self.status_message = (
                             "Pressione SPACE para desabilitar posicionamento de parede"
-                            if self.input_mode == 'WALL'
+                            if self.input_mode == "WALL"
                             else "Pressione SPACE para habilitar posicionamento de parede"
                         )
                         self.status_color = (200, 205, 220)
@@ -578,7 +786,9 @@ class QuoridorGUI:
                     if event.button == 1:
                         self.handle_mouse_click(mouse_pos)
                     elif event.button == 3:
-                        self.wall_orientation = 'V' if self.wall_orientation == 'H' else 'H'
+                        self.wall_orientation = (
+                            "V" if self.wall_orientation == "H" else "H"
+                        )
 
             self.screen.fill(BG_COLOR)
 

@@ -1,13 +1,15 @@
 from __future__ import annotations
+
 from typing import Any
-from core.models import Player, Wall
+
 from core.game import QuoridorGame
+from core.models import Player, Wall
 
 
 def serialize_game_state(
     game: QuoridorGame | None,
     lobby_players: list[dict[str, Any]],
-    status_message: str = ""
+    status_message: str = "",
 ) -> dict[str, Any]:
     """Converte o estado do jogo e do lobby em um dicionário serializável para a rede."""
     state: dict[str, Any] = {
@@ -21,7 +23,8 @@ def serialize_game_state(
             for p in lobby_players
         ],
         "lobby_count": len(lobby_players),
-        "can_start": len(lobby_players) in (2, 4) and (game is None or not game.game_started),
+        "can_start": len(lobby_players) in (2, 4)
+        and (game is None or not game.game_started),
         "game_started": False,
         "num_players": 4 if len(lobby_players) > 2 else 2,
         "turn": 1,
@@ -65,7 +68,9 @@ def sync_game_from_state(game: QuoridorGame, state: dict[str, Any]) -> None:
     game.turn = state.get("turn", 1)
     game.winner = state.get("winner", None)
     game.game_started = state.get("game_started", False)
-    game.walls_per_player = state.get("walls_per_player", 10 if game.num_players == 2 else 5)
+    game.walls_per_player = state.get(
+        "walls_per_player", 10 if game.num_players == 2 else 5
+    )
 
     # Atualiza jogadores
     game.players.clear()
@@ -86,7 +91,9 @@ def sync_game_from_state(game: QuoridorGame, state: dict[str, Any]) -> None:
         if isinstance(w_data, Wall):
             game.walls.add(w_data)
         else:
-            game.walls.add(Wall(
-                position=tuple(w_data["position"]),
-                orientation=w_data["orientation"],
-            ))
+            game.walls.add(
+                Wall(
+                    position=tuple(w_data["position"]),
+                    orientation=w_data["orientation"],
+                )
+            )

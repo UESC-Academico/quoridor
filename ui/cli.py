@@ -1,11 +1,13 @@
 from __future__ import annotations
+
+import contextlib
 import os
 import re
 import sys
-import time
 import threading
+import time
 from dataclasses import dataclass
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from core.game import QuoridorGame
 from core.models import Wall
@@ -17,6 +19,7 @@ if TYPE_CHECKING:
 
 try:
     import msvcrt
+
     HAS_MSVCRT = True
 except ImportError:
     HAS_MSVCRT = False
@@ -24,10 +27,10 @@ except ImportError:
 COLOR_RESET = "\033[0m"
 COLOR_BOLD = "\033[1m"
 COLOR_DIM = "\033[2m"
-COLOR_CYAN = "\033[96m"      # Jogador 1
-COLOR_RED = "\033[91m"       # Jogador 2
-COLOR_YELLOW = "\033[93m"    # Jogador 3 / Paredes
-COLOR_GREEN = "\033[92m"     # Jogador 4 / Destaques positivos
+COLOR_CYAN = "\033[96m"  # Jogador 1
+COLOR_RED = "\033[91m"  # Jogador 2
+COLOR_YELLOW = "\033[93m"  # Jogador 3 / Paredes
+COLOR_GREEN = "\033[92m"  # Jogador 4 / Destaques positivos
 COLOR_MAGENTA = "\033[95m"
 COLOR_GRAY = "\033[90m"
 BG_CURRENT = "\033[44m"
@@ -43,10 +46,8 @@ PLAYER_COLORS = {
 def init_console() -> None:
     """Configura o console para suporte a UTF-8 e sequências de escape ANSI."""
     if hasattr(sys.stdout, "reconfigure"):
-        try:
+        with contextlib.suppress(AttributeError, ValueError, OSError):
             sys.stdout.reconfigure(encoding="utf-8")
-        except Exception:
-            pass
     if os.name == "nt":
         # Ativa o modo de processamento VT100 no Windows
         os.system("")
@@ -58,6 +59,7 @@ def clear_screen() -> None:
 
 
 # --- Estruturas de Dados do Tabuleiro para Exibição ---
+
 
 @dataclass
 class BoardViewData:
@@ -127,6 +129,7 @@ def extract_view_from_state(state: dict[str, Any]) -> BoardViewData:
 
 # --- Renderizadores do Tabuleiro e HUD ---
 
+
 def render_board(
     view: BoardViewData,
     valid_moves: list[tuple[int, int]] | None = None,
@@ -156,7 +159,9 @@ def render_board(
             pos = (r, c)
             if pos in player_pos_map:
                 pid = player_pos_map[pos]
-                color = (PLAYER_COLORS.get(pid, COLOR_RESET) + r_bld) if use_color else ""
+                color = (
+                    (PLAYER_COLORS.get(pid, COLOR_RESET) + r_bld) if use_color else ""
+                )
                 cell_content = f"{color} P{pid}{r_rst}"
             elif pos in valid_set:
                 cell_content = f"{r_grn} · {r_rst}"
@@ -224,7 +229,9 @@ def render_game_info(
 
     if local_player_id is not None and local_player_id in view.players:
         me = view.players[local_player_id]
-        lines.append(f"  Servidor: {server_name or 'Local'}  |  Você é: {r_cyn}P{local_player_id} - {me['name']}{r_rst}")
+        lines.append(
+            f"  Servidor: {server_name or 'Local'}  |  Você é: {r_cyn}P{local_player_id} - {me['name']}{r_rst}"
+        )
     else:
         lines.append("  Modo: Partida Local no Terminal")
     lines.append("=" * 64)
@@ -239,14 +246,22 @@ def render_game_info(
     lines.append("─" * 64)
     lines.append(f"{r_bld}JOGADORES:{r_rst}")
     for pid, p in view.players.items():
-        is_current = (view.turn == pid and not view.winner)
-        is_me = (local_player_id == pid)
+        is_current = view.turn == pid and not view.winner
+        is_me = local_player_id == pid
         p_color = (PLAYER_COLORS.get(pid, COLOR_RESET) + r_bld) if use_color else ""
 
         me_tag = " (Você)" if is_me else ""
-        turn_tag = f" {r_grn}[SUA VEZ]{r_rst}" if is_current and is_me else (f" {r_yel}[VEZ ATUAL]{r_rst}" if is_current else "")
+        turn_tag = (
+            f" {r_grn}[SUA VEZ]{r_rst}"
+            if is_current and is_me
+            else (f" {r_yel}[VEZ ATUAL]{r_rst}" if is_current else "")
+        )
 
-        target_desc = f"Linha {p['target_value']}" if p["target_axis"] == 0 else f"Coluna {p['target_value']}"
+        target_desc = (
+            f"Linha {p['target_value']}"
+            if p["target_axis"] == 0
+            else f"Coluna {p['target_value']}"
+        )
         lines.append(
             f"  * {p_color}[P{pid}] {p['name']}{me_tag}{r_rst}: Pos {p['position']} | "
             f"Paredes: {p['remaining_walls']}/{view.walls_per_player} | Alvo: {target_desc}{turn_tag}"
@@ -258,21 +273,29 @@ def render_game_info(
     if view.winner:
         winner_p = view.players.get(view.winner, {})
         w_name = winner_p.get("name", f"Jogador {view.winner}")
-        w_color = (PLAYER_COLORS.get(view.winner, COLOR_RESET) + r_bld) if use_color else ""
-        lines.append(f"{r_grn}🏆 FIM DE JOGO! O vencedor é {w_color}{w_name} (P{view.winner}){r_grn}! Parabéns! 🏆{r_rst}")
+        w_color = (
+            (PLAYER_COLORS.get(view.winner, COLOR_RESET) + r_bld) if use_color else ""
+        )
+        lines.append(
+            f"{r_grn}🏆 FIM DE JOGO! O vencedor é {w_color}{w_name} (P{view.winner}){r_grn}! Parabéns! 🏆{r_rst}"
+        )
         lines.append("  Digite 'r' para jogar novamente ou 'q' para sair.")
     else:
         current_p = view.players.get(view.turn, {})
         current_name = current_p.get("name", f"Jogador {view.turn}")
-        is_my_turn = (local_player_id is None or view.turn == local_player_id)
+        is_my_turn = local_player_id is None or view.turn == local_player_id
 
         if is_my_turn:
-            lines.append(f"{r_grn}>>> É A SUA VEZ DE JOGAR! ({current_name}) <<<{r_rst}")
+            lines.append(
+                f"{r_grn}>>> É A SUA VEZ DE JOGAR! ({current_name}) <<<{r_rst}"
+            )
             if valid_moves:
                 moves_str = ", ".join(f"({r}, {c})" for r, c in valid_moves)
                 lines.append(f"  Movimentos válidos do peão: {r_cyn}{moves_str}{r_rst}")
         else:
-            lines.append(f"  Aguardando a jogada de {r_yel}{current_name} (P{view.turn}){r_rst}...")
+            lines.append(
+                f"  Aguardando a jogada de {r_yel}{current_name} (P{view.turn}){r_rst}..."
+            )
 
     # Mensagens de Feedback
     if error_message:
@@ -284,8 +307,12 @@ def render_game_info(
     if not view.winner and (local_player_id is None or view.turn == local_player_id):
         lines.append("─" * 64)
         lines.append(f"{r_bld}COMANDOS DISPONÍVEIS:{r_rst}")
-        lines.append("  • Mover peão:      m <linha> <coluna>        (ex: m 1 4  ou simplesmente 1 4)")
-        lines.append("  • Colocar parede:  w <linha> <coluna> <H|V>  (ex: w 3 3 H ou w 3 3 V)")
+        lines.append(
+            "  • Mover peão:      m <linha> <coluna>        (ex: m 1 4  ou simplesmente 1 4)"
+        )
+        lines.append(
+            "  • Colocar parede:  w <linha> <coluna> <H|V>  (ex: w 3 3 H ou w 3 3 V)"
+        )
         lines.append("  • Ajuda:           help                      • Sair: quit")
     lines.append("─" * 64)
 
@@ -314,7 +341,9 @@ def render_lobby(
     lines.append("=" * 64)
     lines.append(f"{r_yel}              SALA MULTIPLAYER - QUORIDOR (CONSOLE){r_rst}")
     lines.append("=" * 64)
-    lines.append(f"  Servidor: {client.server_name}  |  Conectado: {r_cyn}{client.player_name} (P{client.player_id}){r_rst}")
+    lines.append(
+        f"  Servidor: {client.server_name}  |  Conectado: {r_cyn}{client.player_name} (P{client.player_id}){r_rst}"
+    )
     lines.append("=" * 64)
     lines.append("")
     lines.append(f"{r_bld}JOGADORES CONECTADOS NO LOBBY ({count}/4):{r_rst}")
@@ -322,7 +351,7 @@ def render_lobby(
     for p in lobby_players:
         pid = p["id"]
         pname = p["name"]
-        is_me = (pid == client.player_id)
+        is_me = pid == client.player_id
         p_color = (PLAYER_COLORS.get(pid, COLOR_RESET) + r_bld) if use_color else ""
         tag = " (Você)" if is_me else ""
         lines.append(f"  * {p_color}[P{pid}] {pname}{tag}{r_rst}")
@@ -330,10 +359,16 @@ def render_lobby(
     lines.append("")
     lines.append("─" * 64)
     if can_start:
-        lines.append(f"{r_grn}STATUS: Sala pronta para iniciar! (2 ou 4 jogadores presentes){r_rst}")
-        lines.append(f"  Comando: Digite {r_grn}'start'{r_rst} (ou 's') e pressione ENTER para começar.")
+        lines.append(
+            f"{r_grn}STATUS: Sala pronta para iniciar! (2 ou 4 jogadores presentes){r_rst}"
+        )
+        lines.append(
+            f"  Comando: Digite {r_grn}'start'{r_rst} (ou 's') e pressione ENTER para começar."
+        )
     else:
-        lines.append(f"{r_yel}STATUS: Aguardando jogadores... (necessário 2 ou 4 para jogar){r_rst}")
+        lines.append(
+            f"{r_yel}STATUS: Aguardando jogadores... (necessário 2 ou 4 para jogar){r_rst}"
+        )
 
     if error_message:
         lines.append(f"{r_red}[!] ERRO: {error_message}{r_rst}")
@@ -344,6 +379,7 @@ def render_lobby(
 
 
 # --- Parser de Comandos de Console ---
+
 
 def parse_command(cmd_str: str) -> tuple[str, Any]:
     """Interpreta os comandos digitados pelo usuário no terminal."""
@@ -374,7 +410,10 @@ def parse_command(cmd_str: str) -> tuple[str, Any]:
         try:
             r, c = int(parts[1]), int(parts[2])
             if not (0 <= r <= 8 and 0 <= c <= 8):
-                return ("invalid", "Coordenadas fora do limite (linhas e colunas devem ser de 0 a 8).")
+                return (
+                    "invalid",
+                    "Coordenadas fora do limite (linhas e colunas devem ser de 0 a 8).",
+                )
             return ("move", (r, c))
         except ValueError:
             return ("invalid", "Coordenadas devem ser números inteiros (ex: m 1 4).")
@@ -392,12 +431,21 @@ def parse_command(cmd_str: str) -> tuple[str, Any]:
             r, c = int(parts[1]), int(parts[2])
             ori = parts[3].upper()
             if not (0 <= r <= 7 and 0 <= c <= 7):
-                return ("invalid", "Posição da parede fora dos limites (deve ser de 0 a 7 para linhas e colunas).")
+                return (
+                    "invalid",
+                    "Posição da parede fora dos limites (deve ser de 0 a 7 para linhas e colunas).",
+                )
             if ori not in ("H", "V"):
-                return ("invalid", "Orientação deve ser 'H' (horizontal) ou 'V' (vertical).")
+                return (
+                    "invalid",
+                    "Orientação deve ser 'H' (horizontal) ou 'V' (vertical).",
+                )
             return ("wall", ((r, c), ori))
         except ValueError:
-            return ("invalid", "Coordenadas da parede devem ser números inteiros (ex: w 3 3 H).")
+            return (
+                "invalid",
+                "Coordenadas da parede devem ser números inteiros (ex: w 3 3 H).",
+            )
 
     return (
         "invalid",
@@ -406,7 +454,9 @@ def parse_command(cmd_str: str) -> tuple[str, Any]:
 
 
 def read_line_with_event(
-    prompt: str, cancel_event: threading.Event | None = None, poll_interval: float = 0.05
+    prompt: str,
+    cancel_event: threading.Event | None = None,
+    poll_interval: float = 0.05,
 ) -> str | None:
     """Lê entrada do usuário permitindo cancelamento assíncrono caso cancel_event dispare."""
     sys.stdout.write(prompt)
@@ -415,9 +465,8 @@ def read_line_with_event(
     buf: list[str] = []
 
     while True:
-        if cancel_event and cancel_event.is_set():
-            if not buf:
-                return None
+        if cancel_event and cancel_event.is_set() and not buf:
+            return None
 
         if HAS_MSVCRT:
             if msvcrt.kbhit():
@@ -444,11 +493,12 @@ def read_line_with_event(
             try:
                 line = sys.stdin.readline()
                 return line.strip()
-            except Exception:
+            except (OSError, UnicodeDecodeError, EOFError):
                 return None
 
 
 # --- Loops de Execução CLI ---
+
 
 def run_network_cli(client: QuoridorClient) -> None:
     """Loop principal para jogar em modo multiplayer em rede via console."""
@@ -483,7 +533,9 @@ def run_network_cli(client: QuoridorClient) -> None:
         print("\n".join(lobby_lines))
         error_msg = ""
 
-        cmd_raw = read_line_with_event(f"[{client.player_name}] > ", cancel_event=update_event)
+        cmd_raw = read_line_with_event(
+            f"[{client.player_name}] > ", cancel_event=update_event
+        )
         if cmd_raw is None:
             update_event.clear()
             continue
@@ -509,7 +561,7 @@ def run_network_cli(client: QuoridorClient) -> None:
     while running:
         state = client.get_game_state()
         view = extract_view_from_state(state)
-        is_my_turn = (view.turn == client.player_id and not view.winner)
+        is_my_turn = view.turn == client.player_id and not view.winner
         valid_moves = client.get_valid_moves() if is_my_turn else []
 
         clear_screen()
@@ -525,7 +577,10 @@ def run_network_cli(client: QuoridorClient) -> None:
         error_msg = ""
 
         if view.winner:
-            cmd_raw = read_line_with_event("Partida encerrada. [r] Reiniciar | [q] Sair > ", cancel_event=update_event)
+            cmd_raw = read_line_with_event(
+                "Partida encerrada. [r] Reiniciar | [q] Sair > ",
+                cancel_event=update_event,
+            )
             if cmd_raw is None:
                 update_event.clear()
                 continue
@@ -537,7 +592,9 @@ def run_network_cli(client: QuoridorClient) -> None:
             continue
 
         if is_my_turn:
-            cmd_raw = read_line_with_event(f"[{client.player_name} (Sua vez)] > ", cancel_event=update_event)
+            cmd_raw = read_line_with_event(
+                f"[{client.player_name} (Sua vez)] > ", cancel_event=update_event
+            )
             if cmd_raw is None:
                 update_event.clear()
                 continue
@@ -557,14 +614,18 @@ def run_network_cli(client: QuoridorClient) -> None:
                     else:
                         last_action_msg = f"Você moveu para ({pos[0]}, {pos[1]})."
                 else:
-                    error_msg = f"Posição ({pos[0]}, {pos[1]}) não é um movimento válido!"
+                    error_msg = (
+                        f"Posição ({pos[0]}, {pos[1]}) não é um movimento válido!"
+                    )
             elif cmd_type == "wall":
                 pos, ori = payload
                 ok, msg = client.place_wall(pos, ori)
                 if not ok:
                     error_msg = msg
                 else:
-                    last_action_msg = f"Você colocou uma parede em ({pos[0]}, {pos[1]}) [{ori}]."
+                    last_action_msg = (
+                        f"Você colocou uma parede em ({pos[0]}, {pos[1]}) [{ori}]."
+                    )
             elif cmd_type == "invalid":
                 error_msg = payload
         else:
@@ -641,6 +702,8 @@ def run_local_cli(num_players: int = 2) -> None:
             if not ok:
                 error_msg = msg
             else:
-                last_action_msg = f"{current.name} colocou parede em ({pos[0]}, {pos[1]}) [{ori}]."
+                last_action_msg = (
+                    f"{current.name} colocou parede em ({pos[0]}, {pos[1]}) [{ori}]."
+                )
         elif cmd_type == "invalid":
             error_msg = payload

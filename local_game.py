@@ -1,7 +1,8 @@
 # local_game.py
 import argparse
-from ui.gui import QuoridorGUI
+
 from ui.cli import run_local_cli
+from ui.gui import QuoridorGUI
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Partida local de Quoridor")

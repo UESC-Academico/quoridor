@@ -1,18 +1,20 @@
 from __future__ import annotations
-import logging
+
 import threading
 import time
 from typing import Any
+
 import Pyro5.api
 import Pyro5.errors
+
 from core.game import QuoridorGame
 from core.models import Wall
 from network.config import (
+    ALLOWED_PLAYER_COUNTS,
     DEFAULT_NS_HOST,
     DEFAULT_NS_PORT,
     DEFAULT_SERVER_NAME,
     MAX_PLAYERS,
-    ALLOWED_PLAYER_COUNTS,
     configure_pyro,
     logger,
 )
@@ -56,10 +58,13 @@ class QuoridorServer:
                     method = getattr(proxy, action_name, None)
                     if method is not None:
                         method(*args, **kwargs)
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001
                 logger.warning(
                     "Falha ao enviar callback '%s' para jogador %d (%s): %s",
-                    action_name, pid, uri, exc
+                    action_name,
+                    pid,
+                    uri,
+                    exc,
                 )
                 dead_players.append(pid)
 
@@ -113,13 +118,18 @@ class QuoridorServer:
 
             logger.info(
                 "Jogador registrado: ID %d, Nome '%s'. Total no lobby: %d/%d",
-                new_id, cleaned_name, len(self.lobby), self.max_players
+                new_id,
+                cleaned_name,
+                len(self.lobby),
+                self.max_players,
             )
             state = self._get_game_state_unlocked(f"{cleaned_name} entrou no lobby.")
 
         # Notifica todos os jogadores sobre a entrada
         self._broadcast("on_player_joined", player_info, state["lobby"])
-        self._broadcast("on_game_state_changed", state, f"{cleaned_name} entrou no lobby.")
+        self._broadcast(
+            "on_game_state_changed", state, f"{cleaned_name} entrou no lobby."
+        )
 
         return {
             "player_id": new_id,
@@ -190,14 +200,18 @@ class QuoridorServer:
             self.game = QuoridorGame(num_players=num_players)
             for p in self.lobby:
                 assigned_id = self.game.add_player(p["name"])
-                logger.debug("Jogador '%s' vinculado ao ID de jogo %d", p["name"], assigned_id)
+                logger.debug(
+                    "Jogador '%s' vinculado ao ID de jogo %d", p["name"], assigned_id
+                )
 
             logger.info("Partida iniciada com sucesso com %d jogadores!", num_players)
             state = self._get_game_state_unlocked("A partida foi iniciada!")
 
         # Notifica todos os clientes via broadcast
         self._broadcast("on_game_started", state)
-        self._broadcast("on_game_state_changed", state, "Partida iniciada! Vez do Jogador 1.")
+        self._broadcast(
+            "on_game_state_changed", state, "Partida iniciada! Vez do Jogador 1."
+        )
         return True, f"Partida iniciada com {num_players} jogadores!"
 
     # -------------------------------------------------------------------------
@@ -234,9 +248,13 @@ class QuoridorServer:
         if winner:
             logger.info("Fim de jogo! Jogador %d (%s) venceu!", winner, winner_name)
             self._broadcast("on_game_over", winner, winner_name, state)
-            self._broadcast("on_game_state_changed", state, f"Vitória de {winner_name}!")
+            self._broadcast(
+                "on_game_state_changed", state, f"Vitória de {winner_name}!"
+            )
         else:
-            turn_msg = f"{p_name} moveu para {target_pos}. Vez do Jogador {current_turn}."
+            turn_msg = (
+                f"{p_name} moveu para {target_pos}. Vez do Jogador {current_turn}."
+            )
             self._broadcast("on_game_state_changed", state, turn_msg)
 
         return True, msg
@@ -299,7 +317,10 @@ class QuoridorServer:
         with self.lock:
             if self.game is None or not self.game.game_started:
                 return False, "O jogo ainda não começou!"
-            wall = Wall(position=(int(position[0]), int(position[1])), orientation=orientation.strip().upper())
+            wall = Wall(
+                position=(int(position[0]), int(position[1])),
+                orientation=orientation.strip().upper(),
+            )
             return self.game.can_place_wall(player_id, wall)
 
     def reset_game(self, player_id: int | None = None) -> tuple[bool, str]:
@@ -318,6 +339,7 @@ class QuoridorServer:
 # Função Auxiliar de Inicialização do Servidor
 # -----------------------------------------------------------------------------
 
+
 def start_server(
     server_name: str = DEFAULT_SERVER_NAME,
     host: str = "localhost",
@@ -329,6 +351,7 @@ def start_server(
     """Inicializa o servidor Pyro5, registra no Name Server e inicia o loop."""
     configure_pyro()
     from Pyro5.api import config
+
     if ns_host:
         config.NS_HOST = ns_host
     if ns_port:
@@ -339,15 +362,21 @@ def start_server(
     # Tenta localizar o Name Server (pyro5-ns)
     try:
         ns = Pyro5.api.locate_ns(host=ns_host, port=ns_port)
-        logger.info("Name Server do Pyro5 localizado com sucesso em %s:%s", ns_host, ns_port)
+        logger.info(
+            "Name Server do Pyro5 localizado com sucesso em %s:%s", ns_host, ns_port
+        )
     except Pyro5.errors.NamingError:
         if auto_start_ns:
-            logger.info("Name Server não encontrado. Iniciando Name Server embutido em %s:%s...", ns_host, ns_port)
+            logger.info(
+                "Name Server não encontrado. Iniciando Name Server embutido em %s:%s...",
+                ns_host,
+                ns_port,
+            )
             ns_thread = threading.Thread(
                 target=Pyro5.api.start_ns_loop,
                 kwargs={"host": ns_host, "port": ns_port},
                 daemon=True,
-                name="EmbeddedNameServerThread"
+                name="EmbeddedNameServerThread",
             )
             ns_thread.start()
             time.sleep(0.5)

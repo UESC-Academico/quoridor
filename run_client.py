@@ -1,18 +1,21 @@
 import argparse
 import sys
-import time
-from network.config import DEFAULT_NS_HOST, DEFAULT_NS_PORT, DEFAULT_SERVER_NAME, logger
+
 from network.client import QuoridorClient
+from network.config import DEFAULT_NS_HOST, DEFAULT_NS_PORT, DEFAULT_SERVER_NAME, logger
 
 
 def run_cli_loop(client: QuoridorClient) -> None:
     """Modo texto interativo no terminal com telas de tabuleiro e lobby."""
     from ui.cli import run_network_cli
+
     run_network_cli(client)
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Cliente Pyro5 para Quoridor Multiplayer")
+    parser = argparse.ArgumentParser(
+        description="Cliente Pyro5 para Quoridor Multiplayer"
+    )
     parser.add_argument(
         "--name",
         type=str,
@@ -65,9 +68,11 @@ def main() -> None:
     try:
         print(f"Conectando ao servidor '{args.server_name}'...")
         client.connect()
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         logger.error("Falha ao conectar ao servidor: %s", exc)
-        print(f"\nErro de conexão: Não foi possível conectar ao servidor via Name Server '{args.server_name}'.")
+        print(
+            f"\nErro de conexão: Não foi possível conectar ao servidor via Name Server '{args.server_name}'."
+        )
         print("Certifique-se de que o servidor está rodando ('python run_server.py').")
         sys.exit(1)
 
@@ -76,9 +81,10 @@ def main() -> None:
     else:
         try:
             from ui.gui import QuoridorGUI
+
             app = QuoridorGUI(client=client)
             app.run()
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             logger.error("Erro na interface gráfica: %s", exc)
             client.disconnect()
             sys.exit(1)

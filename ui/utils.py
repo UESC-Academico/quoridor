@@ -1,12 +1,13 @@
 import pygame
 
+
 def draw_smooth_circle(
     surface: pygame.Surface,
     center: tuple[int, int],
     radius: int,
     color: tuple[int, int, int] | tuple[int, int, int, int],
     border_color: tuple[int, int, int] | None = None,
-    border_width: int = 0
+    border_width: int = 0,
 ) -> None:
     """Renders a smooth anti-aliased circle using 4x supersampling."""
     scale = 4

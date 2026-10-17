@@ -1,12 +1,13 @@
 import logging
+
 import Pyro5.api
 import Pyro5.serializers
+
 from core.models import Player, Wall
 
 # Logging configuration
 logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] [%(name)s] %(message)s"
+    level=logging.INFO, format="%(asctime)s [%(levelname)s] [%(name)s] %(message)s"
 )
 logger = logging.getLogger("quoridor.network")
 
