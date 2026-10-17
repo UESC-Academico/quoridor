@@ -51,7 +51,47 @@ class QuoridorGame:
         return new_player_id
 
     def next_turn(self) -> None:
-        self.turn = (self.turn % self.num_players) + 1
+        active_ids = [pid for pid, p in sorted(self.players.items()) if p.is_active]
+        if not active_ids:
+            return
+        if self.turn in active_ids:
+            idx = active_ids.index(self.turn)
+            self.turn = active_ids[(idx + 1) % len(active_ids)]
+        else:
+            higher = [pid for pid in active_ids if pid > self.turn]
+            self.turn = higher[0] if higher else active_ids[0]
+
+    def eliminate_player(self, player_id: int) -> int | None:
+        """Elimina um jogador da partida (ex: por desconexão).
+
+        Se restar apenas 1 jogador ativo, esse jogador é declarado vencedor imediato.
+        Se o jogador eliminado era o jogador da vez, o turno passa para o próximo ativo.
+        Retorna o ID do vencedor se a partida terminou, ou None se continua.
+        """
+        if player_id not in self.players:
+            return self.winner
+
+        player = self.players[player_id]
+        if not player.is_active:
+            return self.winner
+
+        player.is_active = False
+
+        active = [p for p in self.players.values() if p.is_active]
+
+        # Se sobrou apenas 1 jogador, ele vence imediatamente!
+        if len(active) == 1:
+            self.winner = active[0].id
+            return self.winner
+
+        if len(active) == 0:
+            return None
+
+        # Se for a vez do jogador que saiu, avança para o próximo ativo
+        if self.turn == player_id and not self.winner:
+            self.next_turn()
+
+        return self.winner
 
     def check_winner(self, player_id: int) -> bool:
         player = self.players[player_id]
@@ -89,6 +129,9 @@ class QuoridorGame:
         if self.turn != player_id:
             return False, "Não é a sua vez!"
 
+        if player_id not in self.players or not self.players[player_id].is_active:
+            return False, "Jogador não encontrado ou eliminado!"
+
         player = self.players[player_id]
         if player.remaining_walls <= 0:
             return False, "Você não tem mais paredes disponíveis!"
@@ -121,6 +164,7 @@ class QuoridorGame:
         clear_path = all(
             has_path_to_goal(p.position, p.target_axis, p.target_value, self)
             for p in self.players.values()
+            if p.is_active
         )
 
         self.walls.remove(wall)
@@ -141,11 +185,15 @@ class QuoridorGame:
         return True, "Parede colocada com sucesso!"
 
     def get_valid_moves(self, player_id: int) -> list[tuple[int, int]]:
+        if player_id not in self.players or not self.players[player_id].is_active:
+            return []
         current_pos = self.players[player_id].position
         r, c = current_pos
 
         occupied_positions = {
-            p.position for p in self.players.values() if p.id != player_id
+            p.position
+            for p in self.players.values()
+            if p.id != player_id and p.is_active
         }
         valid_moves = []
 
@@ -197,6 +245,9 @@ class QuoridorGame:
     ) -> tuple[bool, str]:
         if not self.game_started:
             return False, "O jogo ainda não começou!"
+
+        if player_id not in self.players or not self.players[player_id].is_active:
+            return False, "Jogador não encontrado ou eliminado!"
 
         if self.turn != player_id:
             return False, "Não é a sua vez!"

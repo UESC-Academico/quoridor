@@ -69,13 +69,81 @@ class QuoridorServer:
                 dead_players.append(pid)
 
         if dead_players:
+            game_over_event: tuple[int, str, dict[str, Any]] | None = None
+            state_changed_event: tuple[dict[str, Any], str] | None = None
+
             with self.lock:
                 for pid in dead_players:
                     if pid in self.callbacks:
                         del self.callbacks[pid]
-                    # Remove do lobby se o jogo ainda não tiver iniciado
-                    if self.game is None or not self.game.game_started:
+                    if (
+                        self.game is not None
+                        and self.game.game_started
+                        and self.game.winner is None
+                        and pid in self.game.players
+                        and self.game.players[pid].is_active
+                    ):
+                        state, msg, is_over = self._eliminate_player_unlocked(
+                            pid, "perdeu a conexão"
+                        )
+                        if is_over:
+                            winner = self.game.winner
+                            winner_name = (
+                                self.game.players[winner].name if winner else ""
+                            )
+                            game_over_event = (winner, winner_name, state)
+                        state_changed_event = (state, msg)
+                    elif self.game is None or not self.game.game_started:
                         self.lobby = [p for p in self.lobby if p["id"] != pid]
+
+            if game_over_event:
+                self._broadcast("on_game_over", *game_over_event)
+            if state_changed_event:
+                self._broadcast("on_game_state_changed", *state_changed_event)
+
+    def _eliminate_player_unlocked(
+        self, player_id: int, reason: str = "desconectou"
+    ) -> tuple[dict[str, Any], str, bool]:
+        """Elimina um jogador da partida em andamento, atualiza turno ou define vencedor."""
+        player_name = (
+            self.game.players[player_id].name
+            if (self.game and player_id in self.game.players)
+            else f"Jogador {player_id}"
+        )
+
+        if player_id in self.callbacks:
+            del self.callbacks[player_id]
+
+        if self.game is None or not self.game.game_started:
+            state = self._get_game_state_unlocked(f"{player_name} saiu.")
+            return state, f"{player_name} saiu.", False
+
+        winner_id = self.game.eliminate_player(player_id)
+        active_players = [p for p in self.game.players.values() if p.is_active]
+
+        if winner_id is not None:
+            winner_name = self.game.players[winner_id].name
+            msg = (
+                f"{player_name} {reason} e foi eliminado! "
+                f"Fim de jogo: {winner_name} (P{winner_id}) é o único restante e venceu a partida!"
+            )
+            logger.info(msg)
+            state = self._get_game_state_unlocked(msg)
+            return state, msg, True
+        else:
+            current_turn = self.game.turn
+            turn_name = (
+                self.game.players[current_turn].name
+                if current_turn in self.game.players
+                else f"Jogador {current_turn}"
+            )
+            msg = (
+                f"{player_name} {reason} e foi eliminado! "
+                f"Restam {len(active_players)} jogadores na partida. Vez de {turn_name} (P{current_turn})."
+            )
+            logger.info(msg)
+            state = self._get_game_state_unlocked(msg)
+            return state, msg, False
 
     def _get_game_state_unlocked(self, message: str = "") -> dict[str, Any]:
         """Gera o dicionário de estado atual sem adquirir o lock (uso interno quando o lock já está retido)."""
@@ -139,6 +207,8 @@ class QuoridorServer:
 
     def unregister_player(self, player_id: int) -> tuple[bool, str]:
         """Desconecta um jogador do servidor."""
+        game_over_event: tuple[int, str, dict[str, Any]] | None = None
+
         with self.lock:
             found = False
             removed_name = ""
@@ -148,17 +218,32 @@ class QuoridorServer:
                     removed_name = p["name"]
                     break
 
-            if not found and player_id not in self.callbacks:
+            in_game = (
+                self.game is not None
+                and self.game.game_started
+                and player_id in self.game.players
+            )
+
+            if not found and player_id not in self.callbacks and not in_game:
                 return False, f"Jogador {player_id} não encontrado."
 
             if player_id in self.callbacks:
                 del self.callbacks[player_id]
 
-            if self.game is not None and self.game.game_started:
-                # Jogo em andamento: notifica desistência / saída
-                msg = f"Jogador {player_id} ({removed_name}) desconectou da partida em andamento."
-                logger.warning(msg)
-                state = self._get_game_state_unlocked(msg)
+            if in_game:
+                # Partida em andamento: elimina o jogador que desconectou
+                p = self.game.players[player_id]
+                if p.is_active and self.game.winner is None:
+                    state, msg, is_over = self._eliminate_player_unlocked(
+                        player_id, "desconectou da partida"
+                    )
+                    if is_over and self.game.winner:
+                        winner = self.game.winner
+                        winner_name = self.game.players[winner].name
+                        game_over_event = (winner, winner_name, state)
+                else:
+                    msg = f"Jogador {player_id} desconectou."
+                    state = self._get_game_state_unlocked(msg)
             else:
                 # Lobby: remove e reorganiza IDs para manter ordem sequencial
                 self.lobby = [p for p in self.lobby if p["id"] != player_id]
@@ -174,6 +259,8 @@ class QuoridorServer:
                 logger.info(msg)
                 state = self._get_game_state_unlocked(msg)
 
+        if game_over_event:
+            self._broadcast("on_game_over", *game_over_event)
         self._broadcast("on_player_left", player_id, state["lobby"])
         self._broadcast("on_game_state_changed", state, msg)
         return True, msg

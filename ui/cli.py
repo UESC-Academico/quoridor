@@ -24,8 +24,10 @@ def imprimir_tabuleiro(
     my_id: int | None = None,
 ) -> None:
     """Desenha a matriz 9x9 do Quoridor, peões (P1..P4) e paredes no terminal."""
-    # Mapeia posição (r, c) para o ID do jogador
-    posicoes_peoes = {tuple(p["pos"]): pid for pid, p in players.items()}
+    # Mapeia posição (r, c) para o ID do jogador (apenas jogadores ativos)
+    posicoes_peoes = {
+        tuple(p["pos"]): pid for pid, p in players.items() if p.get("is_active", True)
+    }
 
     print("\n    0   1   2   3   4   5   6   7   8")
     print("  +" + "---+" * 9)
@@ -61,6 +63,10 @@ def imprimir_tabuleiro(
     # Placar e status
     print("\n--- Jogadores ---")
     for pid, p in players.items():
+        if not p.get("is_active", True):
+            print(f"  P{pid} - {p['name']}: [DESCONECTADO / ELIMINADO]")
+            continue
+
         marcador_vez = (
             " [SUA VEZ]" if pid == turn and not winner and pid == my_id else ""
         )
@@ -240,6 +246,7 @@ def run_network_cli(client: QuoridorClient) -> None:
                 "name": p["name"],
                 "pos": tuple(p["position"]),
                 "walls": p["remaining_walls"],
+                "is_active": p.get("is_active", True),
             }
             for pid, p in state.get("players", {}).items()
         }

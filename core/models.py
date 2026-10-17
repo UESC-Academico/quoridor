@@ -15,3 +15,4 @@ class Player:
     target_axis: int
     target_value: int
     remaining_walls: int
+    is_active: bool = True

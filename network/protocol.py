@@ -48,6 +48,7 @@ def serialize_game_state(
                 "target_axis": p.target_axis,
                 "target_value": p.target_value,
                 "remaining_walls": p.remaining_walls,
+                "is_active": p.is_active,
             }
             for pid, p in game.players.items()
         }
@@ -83,6 +84,7 @@ def sync_game_from_state(game: QuoridorGame, state: dict[str, Any]) -> None:
             target_axis=p_data["target_axis"],
             target_value=p_data["target_value"],
             remaining_walls=p_data["remaining_walls"],
+            is_active=p_data.get("is_active", True),
         )
 
     # Atualiza paredes

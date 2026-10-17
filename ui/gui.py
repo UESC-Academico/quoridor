@@ -256,8 +256,12 @@ class QuoridorGUI:
         )
 
         # Indicador de turno
-        status_str = "SUA VEZ" if is_turn else "AGUARDANDO"
-        status_color = color if is_turn else (120, 125, 145)
+        if not getattr(player, "is_active", True):
+            status_str = "ELIMINADO"
+            status_color = (220, 60, 60)
+        else:
+            status_str = "SUA VEZ" if is_turn else "AGUARDANDO"
+            status_color = color if is_turn else (120, 125, 145)
         status_surf = self.font_small.render(status_str, True, status_color)
         self.screen.blit(
             status_surf, (avatar_center[0] + avatar_radius + 16, rect.y + 52)
@@ -352,7 +356,10 @@ class QuoridorGUI:
         if self.game.winner:
             return
 
-        current = self.game.players[self.game.turn]
+        current = self.game.players.get(self.game.turn)
+        if current is None or not getattr(current, "is_active", True):
+            return
+
         color = PLAYER_COLORS.get(current.id, (255, 255, 255))
         edge_thickness = max(4, int(self.groove_size * 0.55))
 
@@ -408,11 +415,17 @@ class QuoridorGUI:
         # Destaca borda alvo
         self.draw_target_goal_edge()
 
-        current_player = self.game.players[self.game.turn]
-        current_color = PLAYER_COLORS.get(current_player.id, (255, 255, 255))
-        valid_moves = (
-            self.game.get_valid_moves(current_player.id) if not self.game.winner else []
-        )
+        current_player = self.game.players.get(self.game.turn)
+        if current_player is None or not getattr(current_player, "is_active", True):
+            current_color = (255, 255, 255)
+            valid_moves = []
+        else:
+            current_color = PLAYER_COLORS.get(current_player.id, (255, 255, 255))
+            valid_moves = (
+                self.game.get_valid_moves(current_player.id)
+                if not self.game.winner
+                else []
+            )
         hovered_cell = self.get_hovered_cell(mouse_pos)
 
         # 1. Células
@@ -449,10 +462,12 @@ class QuoridorGUI:
             self.input_mode == "WALL"
             and hovered_wall_slot is not None
             and not self.game.winner
+            and current_player is not None
+            and getattr(current_player, "is_active", True)
             and current_player.remaining_walls > 0
             and (not self.is_network or self.game.turn == self.client.player_id)
         )
-        if can_show_ghost:
+        if can_show_ghost and current_player is not None:
             hr, hc = hovered_wall_slot
             preview_wall = Wall((hr, hc), self.wall_orientation)
             can_place, _ = self.game.can_place_wall(current_player.id, preview_wall)
@@ -468,6 +483,8 @@ class QuoridorGUI:
 
         # 4. Peões
         for player in self.game.players.values():
+            if not getattr(player, "is_active", True):
+                continue
             r, c = player.position
             center = self.get_cell_rect(r, c).center
             color = PLAYER_COLORS.get(player.id, (255, 255, 255))
@@ -514,7 +531,9 @@ class QuoridorGUI:
             return
 
         # Cabeçalho de Turno
-        current = self.game.players[self.game.turn]
+        current = self.game.players.get(self.game.turn)
+        if current is None or not getattr(current, "is_active", True):
+            return
         current_color = PLAYER_COLORS.get(current.id, (255, 255, 255))
 
         if self.is_network and self.client:
@@ -807,7 +826,3 @@ class QuoridorGUI:
 
         pygame.quit()
         sys.exit()
-
-
-# Alias para retrocompatibilidade
-QuoridorNetworkGUI = QuoridorGUI
