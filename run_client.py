@@ -6,69 +6,9 @@ from network.client import QuoridorClient
 
 
 def run_cli_loop(client: QuoridorClient) -> None:
-    """Modo texto interativo no terminal para testes e partidas sem interface gráfica."""
-    print("=" * 60)
-    print(f"Conectado como {client.player_name} (ID: {client.player_id})")
-    print("Comandos disponíveis:")
-    print("  start             - Inicia a partida (se houver 2 ou 4 jogadores)")
-    print("  move <r> <c>      - Move o peão para a linha r e coluna c (0 a 8)")
-    print("  wall <r> <c> <H|V>- Coloca uma parede na posição (r, c) com orientação H ou V")
-    print("  moves             - Mostra movimentos válidos atuais")
-    print("  state             - Exibe estado atual da partida")
-    print("  quit              - Sair do jogo")
-    print("=" * 60)
-
-    def print_event(ev_type: str, data: dict) -> None:
-        if ev_type == "state_changed":
-            msg = data.get("message", "")
-            turn = data.get("state", {}).get("turn")
-            print(f"\n[EVENTO] {msg} (Vez do Jogador {turn})")
-        elif ev_type == "game_started":
-            print("\n[EVENTO] A partida foi iniciada!")
-        elif ev_type == "game_over":
-            print(f"\n[EVENTO] Partida encerrada! Vencedor: {data.get('winner_name')}")
-
-    client.add_listener(print_event)
-
-    while True:
-        try:
-            cmd = input(f"[{client.player_name}] > ").strip()
-            if not cmd:
-                continue
-
-            parts = cmd.split()
-            op = parts[0].lower()
-
-            if op in ("quit", "exit"):
-                break
-            elif op == "start":
-                ok, msg = client.start_game()
-                print(f"Resultado: {msg}")
-            elif op == "moves":
-                moves = client.get_valid_moves()
-                print(f"Movimentos válidos: {moves}")
-            elif op == "state":
-                state = client.get_game_state()
-                print(f"Turno: {state.get('turn')}, Vencedor: {state.get('winner')}")
-                for pid, p in state.get("players", {}).items():
-                    print(f"  P{pid} ({p['name']}): pos={p['position']}, paredes={p['remaining_walls']}")
-            elif op == "move" and len(parts) == 3:
-                r, c = int(parts[1]), int(parts[2])
-                ok, msg = client.move_player((r, c))
-                print(f"Resultado: {msg}")
-            elif op == "wall" and len(parts) == 4:
-                r, c = int(parts[1]), int(parts[2])
-                orientation = parts[3].upper()
-                ok, msg = client.place_wall((r, c), orientation)
-                print(f"Resultado: {msg}")
-            else:
-                print("Comando inválido. Digite 'start', 'moves', 'move <r> <c>', 'wall <r> <c> <H|V>', ou 'quit'.")
-        except KeyboardInterrupt:
-            break
-        except Exception as exc:
-            print(f"Erro: {exc}")
-
-    client.disconnect()
+    """Modo texto interativo no terminal com telas de tabuleiro e lobby."""
+    from ui.cli import run_network_cli
+    run_network_cli(client)
 
 
 def main() -> None:
