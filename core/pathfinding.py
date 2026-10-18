@@ -1,8 +1,9 @@
 from collections import deque
+from core.game import QuoridorGame
 
 
 def has_path_to_goal(
-    start_pos: tuple[int, int], target_axis: int, target_val: int, board
+    start_pos: tuple[int, int], target_axis: int, target_val: int, board: QuoridorGame
 ) -> bool:
 
     queue = deque([start_pos])

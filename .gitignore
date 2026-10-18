@@ -1,6 +1,6 @@
 venv/
 __pycache__/
-__ruffcache__/
+.ruff_cache/
 ui/__pycache__/
 core/__pycache__/
 network/__pycache__/
