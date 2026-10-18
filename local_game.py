@@ -1,4 +1,9 @@
-# local_game.py
+"""Ponto de entrada para execução de partidas locais de Quoridor.
+
+Permite selecionar o modo de visualização (GUI Pygame ou CLI no terminal)
+e o número de participantes (2 ou 4 jogadores no mesmo computador).
+"""
+
 import argparse
 
 from ui.cli import run_local_cli

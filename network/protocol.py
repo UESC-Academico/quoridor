@@ -11,7 +11,27 @@ def serialize_game_state(
     lobby_players: list[dict[str, Any]],
     status_message: str = "",
 ) -> dict[str, Any]:
-    """Converte o estado do jogo e do lobby em um dicionário serializável para a rede."""
+    """Converte o estado do jogo e do lobby em um dicionário serializável para a rede.
+
+    Args:
+        game: Instância ativa de `QuoridorGame` ou None se ainda estiver no lobby.
+        lobby_players: Lista de jogadores aguardando na sala de espera.
+        status_message: Mensagem informativa ou de erro para exibição aos clientes.
+
+    Returns:
+        Dicionário contendo:
+            - status_message (str): Última mensagem de evento/erro.
+            - lobby (list): Dados dos jogadores conectados na sala.
+            - lobby_count (int): Quantidade de jogadores conectados.
+            - can_start (bool): Se a partida pode ser iniciada (2 ou 4 jogadores).
+            - game_started (bool): Se a partida está em andamento.
+            - num_players (int): Total de jogadores da partida.
+            - turn (int): ID do jogador da vez atual.
+            - winner (int | None): ID do vencedor caso a partida tenha terminado.
+            - players (dict): Mapeamento de id -> dados do jogador.
+            - walls (list): Lista de paredes posicionadas no tabuleiro.
+            - walls_per_player (int): Limite inicial de paredes por jogador.
+    """
     state: dict[str, Any] = {
         "status_message": status_message,
         "lobby": [
@@ -64,7 +84,14 @@ def serialize_game_state(
 
 
 def sync_game_from_state(game: QuoridorGame, state: dict[str, Any]) -> None:
-    """Sincroniza uma instância local de QuoridorGame a partir do dicionário de estado remoto."""
+    """Sincroniza uma instância local de QuoridorGame a partir do dicionário de estado remoto.
+
+    Atualiza turno, vencedor, status de início, jogadores e paredes existentes.
+
+    Args:
+        game: Instância local de `QuoridorGame` a ser mutada com os novos dados.
+        state: Dicionário contendo os dados mais recentes recebidos do servidor.
+    """
     game.num_players = state.get("num_players", game.num_players)
     game.turn = state.get("turn", 1)
     game.winner = state.get("winner", None)

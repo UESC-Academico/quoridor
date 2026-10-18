@@ -44,7 +44,13 @@ class QuoridorServer:
     def _broadcast(self, action_name: str, *args: Any, **kwargs: Any) -> None:
         """Envia uma notificação assíncrona (oneway) para todos os clientes ativos.
 
-        Remove de forma resiliente os callbacks que apresentarem falha de comunicação.
+        Remove de forma resiliente os callbacks que apresentarem falha de comunicação,
+        tratando desconexões abruptas durante a partida.
+
+        Args:
+            action_name: Nome do método de callback a ser executado nos clientes.
+            *args: Argumentos posicionais do callback.
+            **kwargs: Argumentos nomeados do callback.
         """
         with self.lock:
             callbacks_snapshot = list(self.callbacks.items())
@@ -104,7 +110,17 @@ class QuoridorServer:
     def _eliminate_player_unlocked(
         self, player_id: int, reason: str = "desconectou"
     ) -> tuple[dict[str, Any], str, bool]:
-        """Elimina um jogador da partida em andamento, atualiza turno ou define vencedor."""
+        """Elimina um jogador da partida em andamento, atualiza turno ou define vencedor.
+
+        Método auxiliar interno que assume que o lock já foi adquirido pela rotina chamadora.
+
+        Args:
+            player_id: ID do jogador eliminado.
+            reason: Motivo textual da eliminação (ex: 'desconectou', 'perdeu a conexão').
+
+        Returns:
+            Tupla (estado_serializado, mensagem, eh_fim_de_jogo).
+        """
         player_name = (
             self.game.players[player_id].name
             if (self.game and player_id in self.game.players)
@@ -146,7 +162,14 @@ class QuoridorServer:
             return state, msg, False
 
     def _get_game_state_unlocked(self, message: str = "") -> dict[str, Any]:
-        """Gera o dicionário de estado atual sem adquirir o lock (uso interno quando o lock já está retido)."""
+        """Gera o dicionário de estado atual sem adquirir o lock.
+
+        Args:
+            message: Mensagem explicativa de status associada ao estado.
+
+        Returns:
+            Dicionário serializável com lobby e jogo.
+        """
         return serialize_game_state(self.game, self.lobby, message)
 
     # -------------------------------------------------------------------------
@@ -156,9 +179,16 @@ class QuoridorServer:
     def register_player(self, player_name: str, callback_uri: str) -> dict[str, Any]:
         """Registra um novo jogador no lobby da partida.
 
-        Requisitos:
-        - Máximo de 4 jogadores no lobby.
-        - Não permite novas conexões caso o jogo já tenha iniciado.
+        Args:
+            player_name: Nome do jogador.
+            callback_uri: URI de conexão Pyro5 do Daemon do cliente para envio de callbacks.
+
+        Returns:
+            Dicionário com 'player_id', 'name' e 'game_state'.
+
+        Raises:
+            ValueError: Se o nome for vazio, URI for inválida, sala estiver cheia (máx 4)
+                ou partida já tiver começado.
         """
         cleaned_name = (player_name or "").strip()
         if not cleaned_name:
@@ -206,7 +236,17 @@ class QuoridorServer:
         }
 
     def unregister_player(self, player_id: int) -> tuple[bool, str]:
-        """Desconecta um jogador do servidor."""
+        """Desconecta um jogador do servidor.
+
+        Se a partida estiver em andamento, elimina o jogador e pode declarar vitória por W.O.
+        Se ainda estiver no lobby, reordena os IDs restantes sequencialmente.
+
+        Args:
+            player_id: ID do jogador que solicitou desconexão.
+
+        Returns:
+            Tupla (sucesso, mensagem_status).
+        """
         game_over_event: tuple[int, str, dict[str, Any]] | None = None
 
         with self.lock:
@@ -266,9 +306,15 @@ class QuoridorServer:
         return True, msg
 
     def start_game(self, player_id: int | None = None) -> tuple[bool, str]:
-        """Inicia a partida de Quoridor.
+        """Inicia a partida de Quoridor no servidor.
 
-        Requisito: Inicia apenas quando houver exatamente 2 ou 4 jogadores conectados.
+        Requisitos: Inicia apenas quando houver exatamente 2 ou 4 jogadores conectados no lobby.
+
+        Args:
+            player_id: ID opcional do jogador que acionou o início da partida.
+
+        Returns:
+            Tupla (sucesso, mensagem_resultado).
         """
         with self.lock:
             if self.game is not None and self.game.game_started:
@@ -308,7 +354,15 @@ class QuoridorServer:
     def move_player(
         self, player_id: int, new_position: tuple[int, int] | list[int]
     ) -> tuple[bool, str]:
-        """Executa a movimentação do peão de um jogador no tabuleiro."""
+        """Executa a movimentação do peão de um jogador no tabuleiro compartilhado.
+
+        Args:
+            player_id: ID do jogador que realiza a jogada.
+            new_position: Coordenadas (linha, coluna) de destino.
+
+        Returns:
+            Tupla (sucesso, mensagem_resultado).
+        """
         with self.lock:
             if self.game is None or not self.game.game_started:
                 return False, "O jogo ainda não começou!"
@@ -349,7 +403,16 @@ class QuoridorServer:
     def place_wall(
         self, player_id: int, position: tuple[int, int] | list[int], orientation: str
     ) -> tuple[bool, str]:
-        """Posiciona uma parede no tabuleiro para o jogador."""
+        """Posiciona uma parede no tabuleiro compartilhado para o jogador.
+
+        Args:
+            player_id: ID do jogador que coloca a barreira.
+            position: Posição de ancoragem (0-7, 0-7).
+            orientation: Orientação ('H' para horizontal, 'V' para vertical).
+
+        Returns:
+            Tupla (sucesso, mensagem_resultado).
+        """
         with self.lock:
             if self.game is None or not self.game.game_started:
                 return False, "O jogo ainda não começou!"
@@ -384,12 +447,23 @@ class QuoridorServer:
     # -------------------------------------------------------------------------
 
     def get_game_state(self) -> dict[str, Any]:
-        """Retorna o estado completo atual do jogo e do lobby."""
+        """Retorna o estado completo atual do jogo e do lobby.
+
+        Returns:
+            Dicionário serializado com os dados da sala e do jogo.
+        """
         with self.lock:
             return self._get_game_state_unlocked()
 
     def get_valid_moves(self, player_id: int) -> list[tuple[int, int]]:
-        """Retorna os movimentos válidos para o jogador no turno atual."""
+        """Retorna os movimentos válidos para o jogador no turno atual.
+
+        Args:
+            player_id: ID do jogador a ser consultado.
+
+        Returns:
+            Lista de coordenadas (linha, coluna) válidas.
+        """
         with self.lock:
             if self.game is None or not self.game.game_started or self.game.winner:
                 return []
@@ -400,7 +474,16 @@ class QuoridorServer:
     def can_place_wall(
         self, player_id: int, position: tuple[int, int] | list[int], orientation: str
     ) -> tuple[bool, str]:
-        """Verifica preventivamente se a colocação de uma parede é válida."""
+        """Verifica preventivamente se a colocação de uma parede é válida.
+
+        Args:
+            player_id: ID do jogador consultante.
+            position: Posição avaliada (0-7, 0-7).
+            orientation: 'H' ou 'V'.
+
+        Returns:
+            Tupla (eh_valido, motivo).
+        """
         with self.lock:
             if self.game is None or not self.game.game_started:
                 return False, "O jogo ainda não começou!"
@@ -411,7 +494,14 @@ class QuoridorServer:
             return self.game.can_place_wall(player_id, wall)
 
     def reset_game(self, player_id: int | None = None) -> tuple[bool, str]:
-        """Reinicia o jogo, retornando ao lobby com os jogadores conectados."""
+        """Reinicia o jogo, retornando ao lobby com os jogadores conectados mantidos.
+
+        Args:
+            player_id: ID opcional do jogador que solicitou o reinício.
+
+        Returns:
+            Tupla (sucesso, mensagem_resultado).
+        """
         with self.lock:
             self.game = None
             msg = "A partida foi reiniciada para o lobby."
@@ -435,7 +525,25 @@ def start_server(
     ns_port: int | None = DEFAULT_NS_PORT,
     auto_start_ns: bool = True,
 ) -> tuple[Pyro5.api.Daemon, QuoridorServer, threading.Thread | None]:
-    """Inicializa o servidor Pyro5, registra no Name Server e inicia o loop."""
+    """Inicializa o servidor Pyro5, registra no Name Server e inicia o loop de atendimento.
+
+    Se `auto_start_ns` for True e o Name Server não estiver em execução, inicia uma thread
+    com o Name Server embutido automaticamente.
+
+    Args:
+        server_name: Nome do serviço a ser registrado no Name Server.
+        host: Interface de rede para o Daemon do servidor (padrão: 'localhost').
+        port: Porta para o Daemon (0 para seleção automática).
+        ns_host: Endereço do Name Server Pyro5.
+        ns_port: Porta do Name Server Pyro5.
+        auto_start_ns: Se True, inicializa automaticamente um Name Server embutido caso necessário.
+
+    Returns:
+        Tupla (daemon_pyro, instancia_servidor, thread_name_server_opcional).
+
+    Raises:
+        RuntimeError: Se o Name Server não for encontrado e auto_start_ns for False.
+    """
     configure_pyro()
     from Pyro5.api import config
 

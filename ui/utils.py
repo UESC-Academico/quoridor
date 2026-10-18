@@ -9,7 +9,19 @@ def draw_smooth_circle(
     border_color: tuple[int, int, int] | None = None,
     border_width: int = 0,
 ) -> None:
-    """Renders a smooth anti-aliased circle using 4x supersampling."""
+    """Renderiza um círculo suave com anti-aliasing de alta qualidade via supersampling 4x.
+
+    Desenha o círculo e sua borda opcional em uma superfície ampliada temporária e
+    aplica smoothscale para eliminar serrilhados.
+
+    Args:
+        surface: Superfície Pygame de destino.
+        center: Coordenadas centrais (x, y) em pixels.
+        radius: Raio do círculo em pixels.
+        color: Cor de preenchimento (RGB ou RGBA).
+        border_color: Cor da borda opcional (RGB).
+        border_width: Espessura da borda em pixels (0 para sem borda).
+    """
     scale = 4
     d = (radius + border_width + 2) * 2
     surf = pygame.Surface((d * scale, d * scale), pygame.SRCALPHA)

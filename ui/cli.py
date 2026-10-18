@@ -23,7 +23,15 @@ def imprimir_tabuleiro(
     winner: int | None = None,
     my_id: int | None = None,
 ) -> None:
-    """Desenha a matriz 9x9 do Quoridor, peões (P1..P4) e paredes no terminal."""
+    """Desenha a matriz 9x9 do Quoridor, peões (P1..P4) e paredes no terminal.
+
+    Args:
+        players: Dicionário contendo dados de cada jogador ('name', 'pos', 'walls', 'is_active').
+        walls: Conjunto de tuplas ((linha, coluna), orientacao) das paredes existentes.
+        turn: ID do jogador cujo turno está ativo.
+        winner: ID do jogador vencedor caso a partida tenha terminado, ou None.
+        my_id: ID do jogador local para destaque visual no placar ('Você').
+    """
     # Mapeia posição (r, c) para o ID do jogador (apenas jogadores ativos)
     posicoes_peoes = {
         tuple(p["pos"]): pid for pid, p in players.items() if p.get("is_active", True)
@@ -80,7 +88,20 @@ def imprimir_tabuleiro(
 
 
 def processar_comando(texto: str) -> tuple[str, Any]:
-    """Interpreta os comandos digitados pelo jogador."""
+    """Interpreta os comandos digitados pelo jogador no console.
+
+    Formatos aceitos:
+    - Movimento: 'm linha col' ou 'linha col' (ex: 'm 1 4' ou '1 4').
+    - Parede: 'w linha col H/V' ou 'p linha col H/V' (ex: 'w 3 3 H').
+    - Controle: 'iniciar' / 'start' / 's' e 'sair' / 'quit' / 'q'.
+
+    Args:
+        texto: Linha digitada pelo usuário no terminal.
+
+    Returns:
+        Tupla (tipo_comando, dados_processados), onde tipo pode ser
+        'mover', 'parede', 'iniciar', 'sair', 'vazio' ou 'invalido'.
+    """
     partes = texto.strip().split()
     if not partes:
         return "vazio", None
@@ -127,7 +148,11 @@ def processar_comando(texto: str) -> tuple[str, Any]:
 
 
 def run_local_cli(num_players: int = 2) -> None:
-    """Loop principal para uma partida local no console."""
+    """Loop principal para uma partida local no console.
+
+    Args:
+        num_players: Quantidade de jogadores participantes (2 ou 4).
+    """
     game = QuoridorGame(num_players=num_players)
     for i in range(1, num_players + 1):
         game.add_player(f"Jogador {i}")
@@ -182,7 +207,11 @@ def run_local_cli(num_players: int = 2) -> None:
 
 
 def run_network_cli(client: QuoridorClient) -> None:
-    """Loop principal para partida multiplayer via Pyro5 no console."""
+    """Loop principal para partida multiplayer via Pyro5 no console.
+
+    Args:
+        client: Instância conectada e autenticada de `QuoridorClient`.
+    """
     update_event = threading.Event()
     client.add_listener(lambda event, data: update_event.set())
 

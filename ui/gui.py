@@ -21,6 +21,14 @@ class QuoridorGUI:
     def __init__(
         self, num_players: int = 2, client: QuoridorClient | None = None
     ) -> None:
+        """Inicializa a interface gráfica do Quoridor.
+
+        Args:
+            num_players: Quantidade de jogadores para partida local (2 ou 4).
+                Ignorado quando um cliente de rede é fornecido.
+            client: Instância de `QuoridorClient` para partidas online via Pyro5,
+                ou None para jogo local no mesmo computador.
+        """
         pygame.init()
 
         self.client = client
@@ -74,7 +82,12 @@ class QuoridorGUI:
     # --- Sincronização de Rede (Pyro5) ---
 
     def _on_network_event(self, event_type: str, data: dict) -> None:
-        """Callback executado na thread secundária do Pyro5 quando há atualizações remotas."""
+        """Callback executado na thread do Pyro5 ao receber atualizações remotas.
+
+        Args:
+            event_type: Identificador do evento (ex: 'state_changed', 'player_joined').
+            data: Dicionário de payload com estado e/ou mensagem.
+        """
         if event_type in ("state_changed", "game_started", "game_over"):
             state = data.get("state", data) if isinstance(data, dict) else data
             msg = data.get("message", "") if isinstance(data, dict) else ""
@@ -85,7 +98,12 @@ class QuoridorGUI:
                 self._apply_state(state)
 
     def _apply_state(self, state: dict, message: str = "") -> None:
-        """Aplica o dicionário de estado remoto na instância local do jogo."""
+        """Aplica o dicionário de estado remoto na instância local do jogo.
+
+        Args:
+            state: Dicionário contendo os dados sincronizados do servidor.
+            message: Mensagem explicativa opcional a ser exibida na barra de status.
+        """
         if not state:
             return
 
@@ -126,7 +144,12 @@ class QuoridorGUI:
     # --- Cálculos Geométricos e Responsividade ---
 
     def update_dimensions(self, width: int, height: int) -> None:
-        """Recalcula dimensões do tabuleiro e fontes após redimensionamento da janela."""
+        """Recalcula dimensões do tabuleiro, ranhuras e fontes para manter a interface responsiva.
+
+        Args:
+            width: Nova largura da janela em pixels.
+            height: Nova altura da janela em pixels.
+        """
         self.screen_width = width
         self.screen_height = height
 
@@ -141,7 +164,7 @@ class QuoridorGUI:
         self.offset_x = (self.screen_width - self.board_size) // 2
         self.offset_y = (self.screen_height - self.board_size) // 2 - 20
 
-        # Fontes responsivas
+        # Fontes responsivas proporcionais ao tamanho das células
         self.font_title = pygame.font.SysFont(
             "arial", max(16, int(self.cell_size * 0.46)), bold=True
         )
@@ -159,13 +182,30 @@ class QuoridorGUI:
         )
 
     def get_cell_rect(self, row: int, col: int) -> pygame.Rect:
-        """Retorna o retângulo de uma célula (row, col) em pixels."""
+        """Retorna o retângulo de uma célula (row, col) em coordenadas de tela.
+
+        Args:
+            row: Índice da linha (0 a 8).
+            col: Índice da coluna (0 a 8).
+
+        Returns:
+            `pygame.Rect` com coordenadas e dimensões da casa.
+        """
         x = self.offset_x + col * (self.cell_size + self.groove_size)
         y = self.offset_y + row * (self.cell_size + self.groove_size)
         return pygame.Rect(x, y, self.cell_size, self.cell_size)
 
     def get_wall_rect(self, row: int, col: int, orientation: str) -> pygame.Rect:
-        """Retorna o retângulo de uma parede de 2 posições em pixels."""
+        """Retorna o retângulo de uma parede de 2 posições em pixels.
+
+        Args:
+            row: Linha de ancoragem (0 a 7).
+            col: Coluna de ancoragem (0 a 7).
+            orientation: 'H' para horizontal, 'V' para vertical.
+
+        Returns:
+            `pygame.Rect` cobrindo a ranhura de 2 casas de comprimento.
+        """
         x = self.offset_x + col * (self.cell_size + self.groove_size)
         y = self.offset_y + row * (self.cell_size + self.groove_size)
 
@@ -183,7 +223,14 @@ class QuoridorGUI:
         return pygame.Rect(wall_x, wall_y, wall_width, wall_height)
 
     def get_hovered_cell(self, mouse_pos: tuple[int, int]) -> tuple[int, int] | None:
-        """Identifica qual das 81 células está sob o cursor do mouse."""
+        """Identifica qual das 81 células está sob o cursor do mouse.
+
+        Args:
+            mouse_pos: Coordenadas (x, y) do ponteiro do mouse na janela.
+
+        Returns:
+            Tupla (linha, coluna) ou None se o cursor estiver fora do grid.
+        """
         mx, my = mouse_pos
         for r in range(9):
             for c in range(9):
@@ -194,7 +241,14 @@ class QuoridorGUI:
     def get_hovered_wall_slot(
         self, mouse_pos: tuple[int, int]
     ) -> tuple[int, int] | None:
-        """Localiza a interseção de parede (0-7, 0-7) mais próxima do cursor."""
+        """Localiza a interseção de parede (0-7, 0-7) mais próxima do cursor do mouse.
+
+        Args:
+            mouse_pos: Coordenadas (x, y) do mouse.
+
+        Returns:
+            Tupla (linha, coluna) da interseção mais próxima dentro do raio limite, ou None.
+        """
         mx, my = mouse_pos
         threshold = self.cell_size // 2 + self.groove_size
 
@@ -221,7 +275,12 @@ class QuoridorGUI:
     # --- Renderização Gráfica ---
 
     def draw_player_card(self, player, rect: pygame.Rect) -> None:
-        """Renderiza o card lateral de um jogador."""
+        """Renderiza o card lateral contendo avatar, nome, indicador de turno e paredes restantes.
+
+        Args:
+            player: Instância do jogador a ser exibido.
+            rect: `pygame.Rect` delimitando a área do card.
+        """
         is_turn = self.game.turn == player.id and not self.game.winner
         color = PLAYER_COLORS.get(player.id, (255, 255, 255))
         border_color = color if is_turn else CARD_BORDER_INACTIVE
@@ -403,7 +462,11 @@ class QuoridorGUI:
                 )
 
     def draw_board(self, mouse_pos: tuple[int, int]) -> None:
-        """Renderiza o tabuleiro, células, movimentos válidos, paredes e peões."""
+        """Renderiza o tabuleiro, células, projeções de movimentos válidos, paredes e peões.
+
+        Args:
+            mouse_pos: Coordenadas atuais (x, y) do mouse para cálculo de hover e previews.
+        """
         board_rect = pygame.Rect(
             self.offset_x - 12,
             self.offset_y - 12,
@@ -658,7 +721,11 @@ class QuoridorGUI:
     # --- Tratamento de Input ---
 
     def handle_mouse_click(self, mouse_pos: tuple[int, int]) -> None:
-        """Processa clique do mouse para movimentar peão ou colocar parede."""
+        """Processa clique do mouse para movimentar peão ou colocar parede conforme o modo ativo.
+
+        Args:
+            mouse_pos: Coordenadas (x, y) do clique do mouse na tela.
+        """
         if not self.game.game_started or self.game.winner:
             return
 
@@ -736,7 +803,7 @@ class QuoridorGUI:
                         self.error_message_time = pygame.time.get_ticks()
 
     def run(self) -> None:
-        """Loop principal de eventos Pygame."""
+        """Executa o loop principal de renderização, captura de inputs e eventos Pygame."""
         running = True
         while running:
             mouse_pos = pygame.mouse.get_pos()

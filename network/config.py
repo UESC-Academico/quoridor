@@ -5,27 +5,31 @@ import Pyro5.serializers
 
 from core.models import Player, Wall
 
-# Logging configuration
+# Configurações de logging do subsistema de rede
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s [%(levelname)s] [%(name)s] %(message)s"
 )
 logger = logging.getLogger("quoridor.network")
 
-# Network defaults
-DEFAULT_SERVER_NAME = "quoridor.servidor"
-DEFAULT_NS_HOST = "localhost"
-DEFAULT_NS_PORT = 9090
-MAX_PLAYERS = 4
-MIN_PLAYERS = 2
-ALLOWED_PLAYER_COUNTS = (2, 4)
+# Constantes de configuração do Pyro5 e regras de rede
+DEFAULT_SERVER_NAME = (
+    "quoridor.servidor"  # Nome amigável registrado no Name Server (pyro5-ns)
+)
+DEFAULT_NS_HOST = "localhost"  # Host padrão do Pyro5 Name Server
+DEFAULT_NS_PORT = 9090  # Porta padrão do Pyro5 Name Server
+MAX_PLAYERS = 4  # Capacidade máxima da sala de jogo
+MIN_PLAYERS = 2  # Mínimo de jogadores necessários para início da partida
+ALLOWED_PLAYER_COUNTS = (2, 4)  # Quantidades permitidas de jogadores para início legal
 
 _pyro_configured = False
 
 
 def configure_pyro() -> None:
-    """Configura o ambiente Pyro5, definindo o serializador serpent e
+    """Configura o ambiente Pyro5 e os serializadores serpent customizados.
 
-    registrando serializers customizados para os dataclasses Wall e Player.
+    Garante idempotência (executa apenas uma vez). Registra funções bidirecionais
+    de serialização e desserialização entre dataclasses (`Wall` e `Player`) e dicionários,
+    permitindo tráfego seguro de dados estruturados pela rede.
     """
     global _pyro_configured
     if _pyro_configured:

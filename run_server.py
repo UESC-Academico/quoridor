@@ -1,3 +1,9 @@
+"""Ponto de entrada para inicialização do servidor Pyro5 de Quoridor Multiplayer.
+
+Configura parâmetros de rede, descobre ou inicia o Name Server embutido,
+publica o serviço de jogo e atende requisições remotas em loop contínuo.
+"""
+
 import argparse
 import sys
 
@@ -6,6 +12,7 @@ from network.server import start_server
 
 
 def main() -> None:
+    """Processa argumentos de linha de comando e inicia o servidor Pyro5."""
     parser = argparse.ArgumentParser(
         description="Servidor Pyro5 para Quoridor Multiplayer"
     )

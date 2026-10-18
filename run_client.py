@@ -1,3 +1,9 @@
+"""Ponto de entrada para execução do cliente Pyro5 de Quoridor Multiplayer.
+
+Permite conectar a um servidor remoto, escolher nome de jogador e selecionar
+o modo de interface gráfica (Pygame) ou texto (CLI no terminal).
+"""
+
 import argparse
 import sys
 
@@ -6,13 +12,18 @@ from network.config import DEFAULT_NS_HOST, DEFAULT_NS_PORT, DEFAULT_SERVER_NAME
 
 
 def run_cli_loop(client: QuoridorClient) -> None:
-    """Modo texto interativo no terminal com telas de tabuleiro e lobby."""
+    """Inicia o loop interativo em modo texto no terminal.
+
+    Args:
+        client: Instância conectada de `QuoridorClient`.
+    """
     from ui.cli import run_network_cli
 
     run_network_cli(client)
 
 
 def main() -> None:
+    """Analisa argumentos de linha de comando, conecta o cliente e inicializa a interface."""
     parser = argparse.ArgumentParser(
         description="Cliente Pyro5 para Quoridor Multiplayer"
     )

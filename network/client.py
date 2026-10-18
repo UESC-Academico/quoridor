@@ -20,18 +20,28 @@ from network.config import (
 class GameClientCallback:
     """Objeto remoto registrado no Daemon do cliente para receber notificações (callbacks) do servidor.
 
-    Conforme os requisitos técnicos, todos os métodos são decorados com @Pyro5.api.oneway
-    para que o servidor não bloqueie sua execução aguardando respostas.
+    Todos os métodos são decorados com @Pyro5.api.oneway para que o servidor não bloqueie sua
+    execução aguardando respostas.
     """
 
     def __init__(self, client: QuoridorClient) -> None:
+        """Inicializa o manipulador de callbacks vinculado à instância do cliente.
+
+        Args:
+            client: Instância de `QuoridorClient` que processará os eventos despachados.
+        """
         self.client = client
 
     @Pyro5.api.oneway
     def on_player_joined(
         self, player_info: dict[str, Any], lobby_players: list[dict[str, Any]]
     ) -> None:
-        """Callback acionado quando um novo jogador entra na sala."""
+        """Callback acionado quando um novo jogador entra na sala.
+
+        Args:
+            player_info: Dicionário com id e nome do jogador recém-chegado.
+            lobby_players: Lista atualizada de todos os jogadores no lobby.
+        """
         self.client._handle_event(
             "player_joined", {"player": player_info, "lobby": lobby_players}
         )
@@ -40,21 +50,35 @@ class GameClientCallback:
     def on_player_left(
         self, player_id: int, lobby_players: list[dict[str, Any]]
     ) -> None:
-        """Callback acionado quando um jogador sai da sala."""
+        """Callback acionado quando um jogador sai da sala ou se desconecta.
+
+        Args:
+            player_id: ID do jogador que se desconectou.
+            lobby_players: Lista atualizada dos jogadores remanescentes.
+        """
         self.client._handle_event(
             "player_left", {"player_id": player_id, "lobby": lobby_players}
         )
 
     @Pyro5.api.oneway
     def on_game_started(self, initial_state: dict[str, Any]) -> None:
-        """Callback acionado quando a partida é iniciada."""
+        """Callback acionado quando a partida é iniciada pelo servidor.
+
+        Args:
+            initial_state: Dicionário contendo o estado inicial do jogo.
+        """
         self.client._handle_event("game_started", initial_state)
 
     @Pyro5.api.oneway
     def on_game_state_changed(
         self, game_state: dict[str, Any], message: str = ""
     ) -> None:
-        """Callback acionado sempre que o estado do jogo se altera (jogadas, paredes, etc.)."""
+        """Callback acionado sempre que o estado do jogo se altera (jogadas, paredes, etc.).
+
+        Args:
+            game_state: Dicionário com os dados atualizados da partida e tabuleiro.
+            message: Mensagem explicativa descrevendo a última ação ocorrida.
+        """
         self.client._handle_event(
             "state_changed", {"state": game_state, "message": message}
         )
@@ -63,7 +87,13 @@ class GameClientCallback:
     def on_game_over(
         self, winner_id: int, winner_name: str, game_state: dict[str, Any]
     ) -> None:
-        """Callback acionado quando a partida termina com um vencedor."""
+        """Callback acionado quando a partida termina com um vencedor.
+
+        Args:
+            winner_id: ID do jogador vencedor.
+            winner_name: Nome do jogador vencedor.
+            game_state: Estado final completo da partida.
+        """
         self.client._handle_event(
             "game_over",
             {"winner_id": winner_id, "winner_name": winner_name, "state": game_state},
@@ -71,7 +101,11 @@ class GameClientCallback:
 
     @Pyro5.api.oneway
     def on_error(self, message: str) -> None:
-        """Callback acionado para mensagens de erro enviadas pelo servidor."""
+        """Callback acionado para mensagens de erro enviadas pelo servidor.
+
+        Args:
+            message: Descrição do erro ocorrido.
+        """
         self.client._handle_event("error", {"message": message})
 
 
@@ -91,6 +125,16 @@ class QuoridorClient:
         ns_host: str = DEFAULT_NS_HOST,
         ns_port: int | None = DEFAULT_NS_PORT,
     ) -> None:
+        """Inicializa as configurações de conexão do cliente.
+
+        Args:
+            player_name: Nome do jogador local.
+            server_name: Nome com o qual o servidor foi registrado no Name Server.
+            callback_host: Interface de rede para o Daemon local de callback (padrão: 'localhost').
+            callback_port: Porta para o Daemon de callback (0 para porta efêmera aleatória).
+            ns_host: Endereço do Pyro5 Name Server.
+            ns_port: Porta do Pyro5 Name Server.
+        """
         self.player_name = (player_name or "").strip()
         self.server_name = server_name
         self.callback_host = callback_host
@@ -111,19 +155,32 @@ class QuoridorClient:
         self.is_connected = False
 
     def add_listener(self, listener: Callable[[str, Any], None]) -> None:
-        """Registra um ouvinte de eventos (ex: interface gráfica ou CLI)."""
+        """Registra um ouvinte de eventos (ex: interface gráfica ou CLI).
+
+        Args:
+            listener: Função invocada a cada evento no formato `listener(event_type, data)`.
+        """
         with self._lock:
             if listener not in self.listeners:
                 self.listeners.append(listener)
 
     def remove_listener(self, listener: Callable[[str, Any], None]) -> None:
-        """Remove um ouvinte de eventos."""
+        """Remove um ouvinte de eventos previamente registrado.
+
+        Args:
+            listener: Função a ser removida da lista de ouvintes.
+        """
         with self._lock:
             if listener in self.listeners:
                 self.listeners.remove(listener)
 
     def _handle_event(self, event_type: str, data: Any) -> None:
-        """Processa eventos recebidos via callbacks do Pyro5 e despacha aos ouvintes registrados."""
+        """Processa eventos recebidos via callbacks do Pyro5 e despacha aos ouvintes registrados.
+
+        Args:
+            event_type: Nome identificador do evento (ex: 'state_changed', 'game_over').
+            data: Dados associados ao evento.
+        """
         with self._lock:
             if (
                 event_type == "state_changed"
@@ -150,9 +207,13 @@ class QuoridorClient:
                 )
 
     def connect(self) -> dict[str, Any]:
-        """Inicializa o Daemon secundário de callback, resolve o servidor via Name Server
+        """Inicializa o Daemon secundário de callback, resolve o servidor via Name Server e conecta o jogador.
 
-        e conecta o jogador.
+        Returns:
+            Dicionário com 'player_id', 'name' e 'game_state' inicial da sala.
+
+        Raises:
+            Pyro5.errors.NamingError: Se o Name Server ou o servidor não forem encontrados.
         """
         configure_pyro()
 
@@ -206,6 +267,16 @@ class QuoridorClient:
         return result
 
     def _call_remote(self, method_name: str, *args: Any, **kwargs: Any) -> Any:
+        """Executa uma chamada RPC thread-safe no proxy do servidor.
+
+        Args:
+            method_name: Nome do método exposto no QuoridorServer.
+            *args: Argumentos posicionais.
+            **kwargs: Argumentos nomeados.
+
+        Returns:
+            Resposta retornada pelo servidor remoto.
+        """
         with self._lock:
             if not self.server_proxy or not self.is_connected:
                 raise RuntimeError("Cliente não conectado ao servidor.")
@@ -214,7 +285,11 @@ class QuoridorClient:
             return method(*args, **kwargs)
 
     def start_game(self) -> tuple[bool, str]:
-        """Solicita ao servidor o início da partida."""
+        """Solicita ao servidor o início da partida.
+
+        Returns:
+            Tupla (sucesso, mensagem_servidor).
+        """
         try:
             return self._call_remote("start_game", self.player_id)
         except Exception as exc:  # noqa: BLE001
@@ -223,7 +298,14 @@ class QuoridorClient:
     def move_player(
         self, new_position: tuple[int, int] | list[int]
     ) -> tuple[bool, str]:
-        """Envia solicitação de movimentação do peão para o servidor."""
+        """Envia solicitação de movimentação do peão para o servidor.
+
+        Args:
+            new_position: Coordenadas (linha, coluna) de destino.
+
+        Returns:
+            Tupla (sucesso, mensagem_servidor).
+        """
         try:
             return self._call_remote("move_player", self.player_id, list(new_position))
         except Exception as exc:  # noqa: BLE001
@@ -232,7 +314,15 @@ class QuoridorClient:
     def place_wall(
         self, position: tuple[int, int] | list[int], orientation: str
     ) -> tuple[bool, str]:
-        """Envia solicitação de posicionamento de parede para o servidor."""
+        """Envia solicitação de posicionamento de parede para o servidor.
+
+        Args:
+            position: Posição de ancoragem (0 a 7, 0 a 7).
+            orientation: Orientação ('H' ou 'V').
+
+        Returns:
+            Tupla (sucesso, mensagem_servidor).
+        """
         try:
             return self._call_remote(
                 "place_wall", self.player_id, list(position), orientation
@@ -241,7 +331,11 @@ class QuoridorClient:
             return False, str(exc)
 
     def get_valid_moves(self) -> list[tuple[int, int]]:
-        """Consulta os movimentos válidos para o jogador."""
+        """Consulta os movimentos válidos para o jogador.
+
+        Returns:
+            Lista de coordenadas (linha, coluna) alcançáveis pelo jogador local.
+        """
         try:
             moves = self._call_remote("get_valid_moves", self.player_id)
             return [tuple(m) for m in moves]
@@ -250,12 +344,20 @@ class QuoridorClient:
             return []
 
     def get_game_state(self) -> dict[str, Any]:
-        """Retorna a cópia do estado mais recente recebido via callbacks."""
+        """Retorna uma cópia do estado mais recente recebido via callbacks.
+
+        Returns:
+            Dicionário com os dados atuais de jogo e lobby.
+        """
         with self._lock:
             return dict(self.latest_state)
 
     def reset_game(self) -> tuple[bool, str]:
-        """Solicita o reinício da partida."""
+        """Solicita o reinício da partida ao servidor.
+
+        Returns:
+            Tupla (sucesso, mensagem_servidor).
+        """
         try:
             return self._call_remote("reset_game", self.player_id)
         except Exception as exc:  # noqa: BLE001
