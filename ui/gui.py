@@ -121,7 +121,11 @@ class QuoridorGUI:
 
         if not is_started:
             self.game.winner = None
-            if self.client and self.client.player_id and self.my_player_id != self.client.player_id:
+            if (
+                self.client
+                and self.client.player_id
+                and self.my_player_id != self.client.player_id
+            ):
                 self.my_player_id = self.client.player_id
                 self._title_dirty = True
             return
@@ -316,7 +320,7 @@ class QuoridorGUI:
 
         # Nome
         is_me = self.is_network and self.client and player.id == self.client.player_id
-        display_name = f"{player.name} (Você)" if is_me else player.name
+        display_name = "Você" if is_me else player.name
         name_surf = self.font_card_name.render(display_name, True, (240, 242, 250))
         self.screen.blit(
             name_surf, (avatar_center[0] + avatar_radius + 16, rect.y + 20)
@@ -610,9 +614,9 @@ class QuoridorGUI:
         if self.is_network and self.client:
             is_my_turn = self.game.turn == self.client.player_id
             turn_text = (
-                f"SUA VEZ! ({current.name})"
+                f"Sua vez, {current.name}"
                 if is_my_turn
-                else f"Vez de {current.name} (Aguardando...)"
+                else f"Vez de {current.name}, aguardando..."
             )
         else:
             turn_text = f"Vez de {current.name}"
@@ -659,7 +663,7 @@ class QuoridorGUI:
         )
 
         # Subtítulo com contagem
-        count_str = f"Jogadores conectados: {count} / 4  (Mínimo 2, Máximo 4)"
+        count_str = f"Jogadores conectados: {count} / 4  - Mínimo 2, Máximo 4"
         count_surf = self.font_card_name.render(count_str, True, (210, 215, 230))
         self.screen.blit(
             count_surf,
@@ -704,7 +708,7 @@ class QuoridorGUI:
             self.screen.blit(lbl, lbl.get_rect(center=avatar_center))
 
             # Nome
-            display_name = f"{pname} (Você)" if is_me else pname
+            display_name = "Você" if is_me else pname
             name_surf = self.font_card_name.render(display_name, True, (240, 242, 250))
             self.screen.blit(
                 name_surf,
@@ -717,7 +721,9 @@ class QuoridorGUI:
             msg = "Pressione ENTER ou ESPAÇO para INICIAR a partida!"
             msg_color = (6, 214, 160)
         else:
-            msg = "Aguardando mais jogadores para iniciar (necessário 2 ou 4)..."
+            msg = (
+                "Aguardando mais jogadores para iniciar, é necessário 2 ou 4 jogadores."
+            )
             msg_color = (255, 209, 102)
 
         inst_surf = self.font_card_name.render(msg, True, msg_color)
