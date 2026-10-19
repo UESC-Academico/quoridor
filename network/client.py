@@ -7,6 +7,7 @@ from typing import Any
 import Pyro5.api
 import Pyro5.errors
 
+from network.client_callback import GameClientCallback
 from network.config import (
     DEFAULT_NS_HOST,
     DEFAULT_NS_PORT,
@@ -14,118 +15,17 @@ from network.config import (
     configure_pyro,
     logger,
 )
+from network.heartbeat import ClientHeartbeatMonitor
 
-
-@Pyro5.api.expose
-class GameClientCallback:
-    """Objeto remoto registrado no Daemon do cliente para receber notificações (callbacks) do servidor.
-
-    Todos os métodos são decorados com @Pyro5.api.oneway para que o servidor não bloqueie sua
-    execução aguardando respostas.
-    """
-
-    def __init__(self, client: QuoridorClient) -> None:
-        """Inicializa o manipulador de callbacks vinculado à instância do cliente.
-
-        Args:
-            client: Instância de `QuoridorClient` que processará os eventos despachados.
-        """
-        self.client = client
-
-    @Pyro5.api.oneway
-    def on_player_joined(
-        self, player_info: dict[str, Any], lobby_players: list[dict[str, Any]]
-    ) -> None:
-        """Callback acionado quando um novo jogador entra na sala.
-
-        Args:
-            player_info: Dicionário com id e nome do jogador recém-chegado.
-            lobby_players: Lista atualizada de todos os jogadores no lobby.
-        """
-        self.client._handle_event(
-            "player_joined", {"player": player_info, "lobby": lobby_players}
-        )
-
-    @Pyro5.api.oneway
-    def on_player_left(
-        self, player_id: int, lobby_players: list[dict[str, Any]]
-    ) -> None:
-        """Callback acionado quando um jogador sai da sala ou se desconecta.
-
-        Args:
-            player_id: ID do jogador que se desconectou.
-            lobby_players: Lista atualizada dos jogadores remanescentes.
-        """
-        self.client._handle_event(
-            "player_left", {"player_id": player_id, "lobby": lobby_players}
-        )
-
-    @Pyro5.api.oneway
-    def on_game_started(self, initial_state: dict[str, Any]) -> None:
-        """Callback acionado quando a partida é iniciada pelo servidor.
-
-        Args:
-            initial_state: Dicionário contendo o estado inicial do jogo.
-        """
-        self.client._handle_event("game_started", initial_state)
-
-    @Pyro5.api.oneway
-    def on_game_state_changed(
-        self, game_state: dict[str, Any], message: str = ""
-    ) -> None:
-        """Callback acionado sempre que o estado do jogo se altera (jogadas, paredes, etc.).
-
-        Args:
-            game_state: Dicionário com os dados atualizados da partida e tabuleiro.
-            message: Mensagem explicativa descrevendo a última ação ocorrida.
-        """
-        self.client._handle_event(
-            "state_changed", {"state": game_state, "message": message}
-        )
-
-    @Pyro5.api.oneway
-    def on_game_over(
-        self, winner_id: int, winner_name: str, game_state: dict[str, Any]
-    ) -> None:
-        """Callback acionado quando a partida termina com um vencedor.
-
-        Args:
-            winner_id: ID do jogador vencedor.
-            winner_name: Nome do jogador vencedor.
-            game_state: Estado final completo da partida.
-        """
-        self.client._handle_event(
-            "game_over",
-            {"winner_id": winner_id, "winner_name": winner_name, "state": game_state},
-        )
-
-    @Pyro5.api.oneway
-    def on_error(self, message: str) -> None:
-        """Callback acionado para mensagens de erro enviadas pelo servidor.
-
-        Args:
-            message: Descrição do erro ocorrido.
-        """
-        self.client._handle_event("error", {"message": message})
-
-    @Pyro5.api.oneway
-    def on_assigned_id(self, new_player_id: int) -> None:
-        """Callback acionado pelo servidor para sincronizar a alteração do ID do jogador local.
-
-        Args:
-            new_player_id: Novo ID atribuído pelo servidor.
-        """
-        with self.client._lock:
-            self.client.player_id = new_player_id
-        logger.info("ID do jogador atualizado pelo servidor para: %d", new_player_id)
-        self.client._handle_event("player_id_changed", {"player_id": new_player_id})
+__all__ = ["GameClientCallback", "QuoridorClient"]
 
 
 class QuoridorClient:
     """Cliente Quoridor multiplayer com arquitetura de callbacks bidirecionais.
 
-    Executa um Daemon próprio do Pyro5 em uma thread secundária de background
-    e comunica seu URI de callback ao servidor ao se conectar.
+    Executa um Daemon próprio do Pyro5 em uma thread secundária para receber callbacks
+    assíncronos do servidor, monitora a integridade da conexão via Heartbeat e despacha
+    eventos locais para interfaces de usuário (GUI Pygame ou CLI Terminal).
     """
 
     def __init__(
@@ -167,9 +67,11 @@ class QuoridorClient:
         self.listeners: list[Callable[[str, Any], None]] = []
         self.is_connected = False
 
-        self._server_uri: str | None = None
-        self._heartbeat_thread: threading.Thread | None = None
-        self._heartbeat_stop_event = threading.Event()
+        self._heartbeat = ClientHeartbeatMonitor(player_name=self.player_name)
+
+    # -------------------------------------------------------------------------
+    # Gerenciamento de Ouvintes (Observer Pattern) e Eventos Locais
+    # -------------------------------------------------------------------------
 
     def add_listener(self, listener: Callable[[str, Any], None]) -> None:
         """Registra um ouvinte de eventos (ex: interface gráfica ou CLI).
@@ -192,10 +94,10 @@ class QuoridorClient:
                 self.listeners.remove(listener)
 
     def _handle_event(self, event_type: str, data: Any) -> None:
-        """Processa eventos recebidos via callbacks do Pyro5 e despacha aos ouvintes registrados.
+        """Processa eventos recebidos do servidor e despacha aos ouvintes registrados.
 
         Args:
-            event_type: Nome identificador do evento (ex: 'state_changed', 'game_over').
+            event_type: Identificador do evento (ex: 'state_changed', 'game_over').
             data: Dados associados ao evento.
         """
         with self._lock:
@@ -224,11 +126,34 @@ class QuoridorClient:
                     exc,
                 )
 
+    def update_player_id(self, new_player_id: int) -> None:
+        """Atualiza thread-safe o ID do jogador local e emite notificação aos ouvintes.
+
+        Args:
+            new_player_id: Novo ID atribuído pelo servidor após reorganização.
+        """
+        with self._lock:
+            self.player_id = new_player_id
+        self._handle_event("player_id_changed", {"player_id": new_player_id})
+
+    def _notify_connection_lost(self, reason: str = "") -> None:
+        """Notifica os ouvintes que a conexão com o servidor foi interrompida."""
+        with self._lock:
+            if not self.is_connected:
+                return
+            self.is_connected = False
+        logger.warning("Conexão com o servidor perdida: %s", reason)
+        self._handle_event("connection_lost", {"message": reason})
+
+    # -------------------------------------------------------------------------
+    # Conexão e Ciclo de Vida do Daemon
+    # -------------------------------------------------------------------------
+
     def connect(self) -> dict[str, Any]:
-        """Inicializa o Daemon secundário de callback, resolve o servidor via Name Server e conecta o jogador.
+        """Inicializa o Daemon de callback, conecta ao servidor e registra o jogador.
 
         Returns:
-            Dicionário com 'player_id', 'name' e 'game_state' inicial da sala.
+            Dicionário com 'player_id', 'name' e 'game_state' inicial.
 
         Raises:
             Pyro5.errors.NamingError: Se o Name Server ou o servidor não forem encontrados.
@@ -264,7 +189,7 @@ class QuoridorClient:
             server_uri = f"PYRONAME:{self.server_name}@{self.ns_host}:{self.ns_port}"
         else:
             server_uri = f"PYRONAME:{self.server_name}"
-        self._server_uri = server_uri
+
         self.server_proxy = Pyro5.api.Proxy(server_uri)
         self.server_proxy._pyroTimeout = 2.5
 
@@ -279,7 +204,10 @@ class QuoridorClient:
             self.is_connected = True
 
         # Inicia o monitoramento de heartbeat em background
-        self._start_heartbeat()
+        self._heartbeat.start(
+            server_uri=server_uri,
+            on_connection_lost=self._notify_connection_lost,
+        )
 
         logger.info(
             "Conectado com sucesso ao servidor '%s'! Atribuído Player ID: %d",
@@ -288,53 +216,54 @@ class QuoridorClient:
         )
         return result
 
-    def _notify_connection_lost(self, reason: str = "") -> None:
-        """Notifica os ouvintes que a conexão com o servidor foi interrompida."""
+    def disconnect(self) -> None:
+        """Desconecta do servidor, interrompe o heartbeat e encerra o Daemon local."""
+        self._heartbeat.stop()
+
         with self._lock:
-            if not self.is_connected:
+            if not self.is_connected and not self.server_proxy:
                 return
             self.is_connected = False
-        logger.warning("Conexão com o servidor perdida: %s", reason)
-        self._handle_event("connection_lost", {"message": reason})
+            player_id = self.player_id
+            self.player_id = None
+            proxy = self.server_proxy
+            self.server_proxy = None
+            daemon = self.daemon
+            self.daemon = None
 
-    def _start_heartbeat(self) -> None:
-        """Inicializa a thread de verificação de liveness do servidor."""
-        self._heartbeat_stop_event.clear()
-        self._heartbeat_thread = threading.Thread(
-            target=self._heartbeat_loop,
-            daemon=True,
-            name=f"ClientHeartbeat-{self.player_name}",
-        )
-        self._heartbeat_thread.start()
+        logger.info("Desconectando cliente %s (ID %s)...", self.player_name, player_id)
 
-    def _heartbeat_loop(self) -> None:
-        """Pinga periodicamente o servidor para detectar quedas precocemente."""
-        if not self._server_uri:
-            return
+        # Notifica o servidor sobre a desconexão
+        if proxy and player_id is not None:
+            try:
+                proxy._pyroClaimOwnership()
+                proxy._pyroTimeout = 1.5
+                proxy.unregister_player(player_id)
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("Aviso ao desregistrar do servidor: %s", exc)
+            finally:
+                try:
+                    proxy._pyroRelease()
+                except (Pyro5.errors.PyroError, OSError) as exc:
+                    logger.debug("Aviso ao liberar proxy: %s", exc)
 
-        try:
-            with Pyro5.api.Proxy(self._server_uri) as hb_proxy:
-                hb_proxy._pyroTimeout = 2.0
-                while not self._heartbeat_stop_event.wait(timeout=2.0):
-                    with self._lock:
-                        if not self.is_connected:
-                            break
-                    try:
-                        hb_proxy.ping()
-                    except Exception as exc:  # noqa: BLE001
-                        with self._lock:
-                            if not self.is_connected:
-                                break
-                        logger.warning("Heartbeat falhou ao contatar servidor: %s", exc)
-                        self._notify_connection_lost(
-                            f"Servidor inacessível ou desconectado: {exc}"
-                        )
-                        break
-        except Exception as exc:  # noqa: BLE001
-            logger.debug("Aviso ao encerrar proxy do heartbeat: %s", exc)
+        # Encerra o Daemon de callbacks
+        if daemon:
+            try:
+                daemon.shutdown()
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("Aviso ao desligar daemon do cliente: %s", exc)
+
+        logger.info("Cliente desconectado com sucesso.")
+
+    # -------------------------------------------------------------------------
+    # Chamadas Remotas RPC e Sincronização de Estado
+    # -------------------------------------------------------------------------
 
     def _call_remote(self, method_name: str, *args: Any, **kwargs: Any) -> Any:
         """Executa uma chamada RPC thread-safe no proxy do servidor.
+
+        Captura falhas de conexão de baixo nível e dispara notificação de desconexão.
 
         Args:
             method_name: Nome do método exposto no QuoridorServer.
@@ -370,11 +299,7 @@ class QuoridorClient:
             raise
 
     def _wait_for_state_sync(self, timeout: float = 1.0) -> None:
-        """Aguarda a sincronização do estado local via callback ou recorre ao RPC de fallback.
-
-        Garante que chamadas que alteram o estado da partida (ex: move_player, place_wall)
-        só retornem após o `latest_state` local ter sido devidamente atualizado.
-        """
+        """Aguarda a sincronização do estado local via callback ou recorre ao fallback RPC."""
         if not self._state_event.wait(timeout=timeout):
             with self._lock:
                 if not self.is_connected:
@@ -387,12 +312,12 @@ class QuoridorClient:
             except Exception as exc:  # noqa: BLE001
                 logger.warning("Falha ao sincronizar estado via fallback RPC: %s", exc)
 
-    def start_game(self) -> tuple[bool, str]:
-        """Solicita ao servidor o início da partida.
+    # -------------------------------------------------------------------------
+    # Ações de Jogo
+    # -------------------------------------------------------------------------
 
-        Returns:
-            Tupla (sucesso, mensagem_servidor).
-        """
+    def start_game(self) -> tuple[bool, str]:
+        """Solicita ao servidor o início da partida."""
         self._state_event.clear()
         try:
             res = self._call_remote("start_game", self.player_id)
@@ -405,14 +330,7 @@ class QuoridorClient:
     def move_player(
         self, new_position: tuple[int, int] | list[int]
     ) -> tuple[bool, str]:
-        """Envia solicitação de movimentação do peão para o servidor.
-
-        Args:
-            new_position: Coordenadas (linha, coluna) de destino.
-
-        Returns:
-            Tupla (sucesso, mensagem_servidor).
-        """
+        """Envia solicitação de movimentação do peão para o servidor."""
         self._state_event.clear()
         try:
             res = self._call_remote("move_player", self.player_id, list(new_position))
@@ -425,15 +343,7 @@ class QuoridorClient:
     def place_wall(
         self, position: tuple[int, int] | list[int], orientation: str
     ) -> tuple[bool, str]:
-        """Envia solicitação de posicionamento de parede para o servidor.
-
-        Args:
-            position: Posição de ancoragem (0 a 7, 0 a 7).
-            orientation: Orientação ('H' ou 'V').
-
-        Returns:
-            Tupla (sucesso, mensagem_servidor).
-        """
+        """Envia solicitação de posicionamento de parede para o servidor."""
         self._state_event.clear()
         try:
             res = self._call_remote(
@@ -446,11 +356,7 @@ class QuoridorClient:
             return False, str(exc)
 
     def get_valid_moves(self) -> list[tuple[int, int]]:
-        """Consulta os movimentos válidos para o jogador.
-
-        Returns:
-            Lista de coordenadas (linha, coluna) alcançáveis pelo jogador local.
-        """
+        """Consulta os movimentos válidos para o jogador no turno atual."""
         try:
             moves = self._call_remote("get_valid_moves", self.player_id)
             return [tuple(m) for m in moves]
@@ -459,20 +365,12 @@ class QuoridorClient:
             return []
 
     def get_game_state(self) -> dict[str, Any]:
-        """Retorna uma cópia do estado mais recente recebido via callbacks.
-
-        Returns:
-            Dicionário com os dados atuais de jogo e lobby.
-        """
+        """Retorna uma cópia do estado mais recente sincronizado."""
         with self._lock:
             return dict(self.latest_state)
 
     def reset_game(self) -> tuple[bool, str]:
-        """Solicita o reinício da partida ao servidor.
-
-        Returns:
-            Tupla (sucesso, mensagem_servidor).
-        """
+        """Solicita o reinício da partida ao servidor."""
         self._state_event.clear()
         try:
             res = self._call_remote("reset_game", self.player_id)
@@ -481,42 +379,3 @@ class QuoridorClient:
             return tuple(res)
         except Exception as exc:  # noqa: BLE001
             return False, str(exc)
-
-    def disconnect(self) -> None:
-        """Desconecta do servidor e desliga o Daemon local de callbacks."""
-        self._heartbeat_stop_event.set()
-        with self._lock:
-            if not self.is_connected and not self.server_proxy:
-                return
-            self.is_connected = False
-            player_id = self.player_id
-            self.player_id = None
-            proxy = self.server_proxy
-            self.server_proxy = None
-            daemon = self.daemon
-            self.daemon = None
-
-        logger.info("Desconectando cliente %s (ID %s)...", self.player_name, player_id)
-
-        # Informa ao servidor
-        if proxy and player_id is not None:
-            try:
-                proxy._pyroClaimOwnership()
-                proxy._pyroTimeout = 1.5
-                proxy.unregister_player(player_id)
-            except Exception as exc:  # noqa: BLE001
-                logger.debug("Aviso ao desregistrar do servidor: %s", exc)
-            finally:
-                try:
-                    proxy._pyroRelease()
-                except (Pyro5.errors.PyroError, OSError) as exc:
-                    logger.debug("Aviso ao liberar proxy: %s", exc)
-
-        # Desliga o Daemon de callback
-        if daemon:
-            try:
-                daemon.shutdown()
-            except Exception as exc:  # noqa: BLE001
-                logger.debug("Aviso ao desligar daemon do cliente: %s", exc)
-
-        logger.info("Cliente desconectado com sucesso.")

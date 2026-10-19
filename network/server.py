@@ -9,6 +9,7 @@ import Pyro5.errors
 
 from core.game import QuoridorGame
 from core.models import Wall
+from network.broadcaster import Broadcaster
 from network.config import (
     ALLOWED_PLAYER_COUNTS,
     DEFAULT_NS_HOST,
@@ -18,7 +19,10 @@ from network.config import (
     configure_pyro,
     logger,
 )
+from network.lobby import LobbyManager
 from network.protocol import serialize_game_state
+
+__all__ = ["QuoridorServer", "start_server"]
 
 
 @Pyro5.api.expose
@@ -27,25 +31,26 @@ class QuoridorServer:
     """Servidor Quoridor multiplayer com estado compartilhado em instância única.
 
     Utiliza Pyro5 e threading.Lock para garantir concorrência segura entre múltiplos jogadores.
+    Delega a gestão da sala de espera para `LobbyManager` e o envio de callbacks para `Broadcaster`.
     """
 
     def __init__(self) -> None:
+        """Inicializa as instâncias de sincronização, sala de espera e regras de jogo."""
         self.lock = threading.Lock()
         self.game: QuoridorGame | None = None
-        self.lobby: list[dict[str, Any]] = []
-        self.callbacks: dict[int, str] = {}
-        self.max_players = MAX_PLAYERS
+        self.lobby = LobbyManager(max_players=MAX_PLAYERS)
+        self.broadcaster = Broadcaster()
         logger.info("Instância do QuoridorServer inicializada.")
 
     # -------------------------------------------------------------------------
-    # Métodos Internos de Broadcast e Notificação
+    # Métodos Internos de Notificação e Broadcast
     # -------------------------------------------------------------------------
 
     def _broadcast(self, action_name: str, *args: Any, **kwargs: Any) -> None:
-        """Envia uma notificação assíncrona (oneway) para todos os clientes ativos.
+        """Envia notificação assíncrona (oneway) para todos os jogadores conectados.
 
-        Remove de forma resiliente os callbacks que apresentarem falha de comunicação,
-        tratando desconexões abruptas durante a partida.
+        Purga de forma resiliente qualquer cliente que falhar durante a chamada
+        e atualiza o estado do jogo caso um jogador ativo tenha caído.
 
         Args:
             action_name: Nome do método de callback a ser executado nos clientes.
@@ -53,27 +58,11 @@ class QuoridorServer:
             **kwargs: Argumentos nomeados do callback.
         """
         with self.lock:
-            callbacks_snapshot = list(self.callbacks.items())
+            callbacks_snapshot = self.lobby.get_callbacks_snapshot()
 
-        dead_players: list[int] = []
-        callbacks_copy = callbacks_snapshot
-        for pid, uri in callbacks_copy:
-            try:
-                with Pyro5.api.Proxy(uri) as proxy:
-                    proxy._pyroTimeout = 3.0
-                    proxy._pyroOneway.add(action_name)
-                    method = getattr(proxy, action_name, None)
-                    if method is not None:
-                        method(*args, **kwargs)
-            except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "Falha ao enviar callback '%s' para jogador %d (%s): %s",
-                    action_name,
-                    pid,
-                    uri,
-                    exc,
-                )
-                dead_players.append(pid)
+        dead_players = self.broadcaster.broadcast(
+            callbacks_snapshot, action_name, *args, **kwargs
+        )
 
         if dead_players:
             game_over_event: tuple[int, str, dict[str, Any]] | None = None
@@ -81,9 +70,7 @@ class QuoridorServer:
 
             with self.lock:
                 for pid in dead_players:
-                    if pid in self.callbacks:
-                        del self.callbacks[pid]
-                    self.lobby = [p for p in self.lobby if p["id"] != pid]
+                    self.lobby.remove(pid)
 
                     if (
                         self.game is not None
@@ -103,10 +90,14 @@ class QuoridorServer:
                             game_over_event = (winner, winner_name, state)
                         state_changed_event = (state, msg)
                     elif self.game is None or not self.game.game_started:
-                        self._reorganize_lobby_unlocked()
+                        id_updates = self.lobby.reorganize()
+                        for uri, new_id in id_updates:
+                            self.broadcaster.notify_one(
+                                uri, "on_assigned_id", new_id
+                            )
 
-                # Se todos os jogadores caíram ou saíram, reseta completamente o servidor para o lobby
-                if not self.callbacks:
+                # Se todos os jogadores caíram ou saíram, reseta completamente o servidor
+                if not self.lobby.has_active_callbacks():
                     logger.info(
                         "Todos os jogadores foram desconectados. "
                         "Resetando o servidor para o estado inicial de espera."
@@ -116,70 +107,32 @@ class QuoridorServer:
                     game_over_event = None
                     state_changed_event = None
 
-            if game_over_event and self.callbacks:
+            if game_over_event and self.lobby.has_active_callbacks():
                 self._broadcast("on_game_over", *game_over_event)
-            if state_changed_event and self.callbacks:
+            if state_changed_event and self.lobby.has_active_callbacks():
                 self._broadcast("on_game_state_changed", *state_changed_event)
-
-    def _reorganize_lobby_unlocked(self) -> None:
-        """Purga jogadores desconectados do lobby e reordena os IDs sequencialmente de 1 a N.
-
-        Garante que apenas jogadores com callback ativo permaneçam na sala de espera
-        e notifica os clientes caso seu ID tenha sido alterado para manter sincronia.
-        """
-        self.lobby = [p for p in self.lobby if p["id"] in self.callbacks]
-        old_callbacks = dict(self.callbacks)
-        self.callbacks.clear()
-
-        id_updates: list[tuple[str, int]] = []
-        for idx, p in enumerate(self.lobby, start=1):
-            old_id = p["id"]
-            p["id"] = idx
-            if old_id in old_callbacks:
-                self.callbacks[idx] = old_callbacks[old_id]
-                if old_id != idx:
-                    id_updates.append((old_callbacks[old_id], idx))
-
-        for uri, new_id in id_updates:
-            try:
-                with Pyro5.api.Proxy(uri) as proxy:
-                    proxy._pyroTimeout = 2.0
-                    proxy._pyroOneway.add("on_assigned_id")
-                    method = getattr(proxy, "on_assigned_id", None)
-                    if method is not None:
-                        method(new_id)
-            except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "Falha ao notificar atribuição do novo ID %d para %s: %s",
-                    new_id,
-                    uri,
-                    exc,
-                )
 
     def _eliminate_player_unlocked(
         self, player_id: int, reason: str = "desconectou"
     ) -> tuple[dict[str, Any], str, bool]:
-        """Elimina um jogador da partida em andamento, atualiza turno ou define vencedor.
+        """Elimina um jogador da partida em andamento e atualiza turno ou vencedor.
 
-        Método auxiliar interno que assume que o lock já foi adquirido pela rotina chamadora.
+        Assume que o lock da instância já foi adquirido pela rotina chamadora.
 
         Args:
             player_id: ID do jogador eliminado.
-            reason: Motivo textual da eliminação (ex: 'desconectou', 'perdeu a conexão').
+            reason: Motivo textual da eliminação.
 
         Returns:
-            Tupla (estado_serializado, mensagem, eh_fim_de_jogo).
+            Tupla (estado_serializado, mensagem_resultado, eh_fim_de_jogo).
         """
         player_name = (
             self.game.players[player_id].name
             if (self.game and player_id in self.game.players)
-            else f"Jogador {player_id}"
+            else self.lobby.get_player_name(player_id)
         )
 
-        if player_id in self.callbacks:
-            del self.callbacks[player_id]
-
-        self.lobby = [p for p in self.lobby if p["id"] != player_id]
+        self.lobby.remove(player_id)
 
         if self.game is None or not self.game.game_started:
             state = self._get_game_state_unlocked(f"{player_name} saiu.")
@@ -198,7 +151,7 @@ class QuoridorServer:
             state = self._get_game_state_unlocked(msg)
             return state, msg, True
         else:
-            if not active_players or not self.callbacks:
+            if not active_players or not self.lobby.has_active_callbacks():
                 msg = f"{player_name} {reason}. Não há mais jogadores ativos."
                 logger.info(msg)
                 self.game = None
@@ -224,12 +177,12 @@ class QuoridorServer:
         """Gera o dicionário de estado atual sem adquirir o lock.
 
         Args:
-            message: Mensagem explicativa de status associada ao estado.
+            message: Mensagem explicativa associada ao estado.
 
         Returns:
-            Dicionário serializável com lobby e jogo.
+            Dicionário serializável contendo lobby e jogo.
         """
-        return serialize_game_state(self.game, self.lobby, message)
+        return serialize_game_state(self.game, self.lobby.get_players(), message)
 
     # -------------------------------------------------------------------------
     # Gerenciamento de Sala e Jogadores (Lobby)
@@ -240,14 +193,13 @@ class QuoridorServer:
 
         Args:
             player_name: Nome do jogador.
-            callback_uri: URI de conexão Pyro5 do Daemon do cliente para envio de callbacks.
+            callback_uri: URI de conexão Pyro5 do Daemon do cliente para callbacks.
 
         Returns:
             Dicionário com 'player_id', 'name' e 'game_state'.
 
         Raises:
-            ValueError: Se o nome for vazio, URI for inválida, sala estiver cheia (máx 4)
-                ou partida já tiver começado.
+            ValueError: Se o nome for vazio, URI inválida, sala cheia ou jogo em andamento.
         """
         cleaned_name = (player_name or "").strip()
         if not cleaned_name:
@@ -256,19 +208,15 @@ class QuoridorServer:
             raise ValueError("URI de callback obrigatória para conexão bidirecional.")
 
         with self.lock:
-            # Purga do lobby qualquer entrada órfã antes de alocar novo ID
-            self.lobby = [p for p in self.lobby if p["id"] in self.callbacks]
-
-            # 1. Se não há jogadores ativos conectados no servidor, reseta qualquer partida residual
-            if not self.callbacks:
+            # 1. Se não há jogadores conectados, reseta qualquer resíduo de jogo anterior
+            if not self.lobby.has_active_callbacks():
                 if self.game is not None:
                     logger.info(
                         "Nenhum jogador conectado no servidor. Resetando estado do jogo para o lobby."
                     )
                     self.game = None
 
-            # 2. Se a partida anterior já terminou (tem um vencedor definido), reseta para o lobby
-            # para acomodar nova conexão e permitir o início de uma nova partida
+            # 2. Se a partida anterior já terminou com vencedor, reseta para o lobby
             elif self.game is not None and self.game.winner is not None:
                 logger.info(
                     "Partida anterior já finalizada com vencedor (P%d). "
@@ -276,37 +224,19 @@ class QuoridorServer:
                     self.game.winner,
                 )
                 self.game = None
-                self._reorganize_lobby_unlocked()
+                id_updates = self.lobby.reorganize()
+                for uri, new_id in id_updates:
+                    self.broadcaster.notify_one(uri, "on_assigned_id", new_id)
 
-            # 3. Se houver uma partida ativamente em andamento (sem vencedor), rejeita nova conexão
-            if self.game is not None and self.game.game_started and self.game.winner is None:
+            # 3. Se uma partida ainda estiver ativamente em andamento, impede nova entrada
+            if (
+                self.game is not None
+                and self.game.game_started
+                and self.game.winner is None
+            ):
                 raise ValueError("A partida já começou! Não é possível entrar agora.")
 
-            if len(self.lobby) >= self.max_players:
-                raise ValueError(
-                    f"O lobby está cheio! Limite máximo de {self.max_players} jogadores atingido."
-                )
-
-            existing_ids = {p["id"] for p in self.lobby}
-            new_id = next(
-                i for i in range(1, self.max_players + 1) if i not in existing_ids
-            )
-            player_info = {
-                "id": new_id,
-                "name": cleaned_name,
-                "callback_uri": callback_uri,
-            }
-            self.lobby.append(player_info)
-            self.lobby.sort(key=lambda p: p["id"])
-            self.callbacks[new_id] = callback_uri
-
-            logger.info(
-                "Jogador registrado: ID %d, Nome '%s'. Total no lobby: %d/%d",
-                new_id,
-                cleaned_name,
-                len(self.lobby),
-                self.max_players,
-            )
+            player_info = self.lobby.register(cleaned_name, callback_uri)
             state = self._get_game_state_unlocked(f"{cleaned_name} entrou no lobby.")
 
         # Notifica todos os jogadores sobre a entrada
@@ -316,19 +246,19 @@ class QuoridorServer:
         )
 
         return {
-            "player_id": new_id,
+            "player_id": player_info["id"],
             "name": cleaned_name,
             "game_state": state,
         }
 
     def unregister_player(self, player_id: int) -> tuple[bool, str]:
-        """Desconecta um jogador do servidor.
+        """Desconecta um jogador do servidor de forma graciosa.
 
         Se a partida estiver em andamento, elimina o jogador e pode declarar vitória por W.O.
-        Se ainda estiver no lobby, reordena os IDs restantes sequencialmente.
+        Se ainda estiver no lobby, reorganiza os IDs restantes sequencialmente.
 
         Args:
-            player_id: ID do jogador que solicitou desconexão.
+            player_id: ID do jogador solicitante da desconexão.
 
         Returns:
             Tupla (sucesso, mensagem_status).
@@ -336,13 +266,7 @@ class QuoridorServer:
         game_over_event: tuple[int, str, dict[str, Any]] | None = None
 
         with self.lock:
-            found = False
-            removed_name = ""
-            for p in self.lobby:
-                if p["id"] == player_id:
-                    found = True
-                    removed_name = p["name"]
-                    break
+            found, removed_name = self.lobby.unregister(player_id)
 
             in_game = (
                 self.game is not None
@@ -350,17 +274,10 @@ class QuoridorServer:
                 and player_id in self.game.players
             )
 
-            if not found and player_id not in self.callbacks and not in_game:
+            if not found and not in_game:
                 return False, f"Jogador {player_id} não encontrado."
 
-            if player_id in self.callbacks:
-                del self.callbacks[player_id]
-
-            # Remove do lobby imediatamente
-            self.lobby = [p for p in self.lobby if p["id"] != player_id]
-
             if in_game:
-                # Partida em andamento: elimina o jogador que desconectou
                 p = self.game.players[player_id]
                 if p.is_active and self.game.winner is None:
                     state, msg, is_over = self._eliminate_player_unlocked(
@@ -374,13 +291,15 @@ class QuoridorServer:
                     msg = f"Jogador {removed_name or player_id} desconectou."
                     state = self._get_game_state_unlocked(msg)
             else:
-                self._reorganize_lobby_unlocked()
+                id_updates = self.lobby.reorganize()
+                for uri, new_id in id_updates:
+                    self.broadcaster.notify_one(uri, "on_assigned_id", new_id)
                 msg = f"Jogador {removed_name} saiu do lobby."
                 logger.info(msg)
                 state = self._get_game_state_unlocked(msg)
 
-            # Se todos os jogadores saíram do servidor, reseta completamente para o estado inicial
-            if not self.callbacks:
+            # Se todos os jogadores saíram do servidor, reseta completamente
+            if not self.lobby.has_active_callbacks():
                 logger.info(
                     "Todos os jogadores saíram. Servidor reiniciado para o estado inicial de espera."
                 )
@@ -395,21 +314,23 @@ class QuoridorServer:
         return True, msg
 
     def start_game(self, player_id: int | None = None) -> tuple[bool, str]:
-        """Inicia a partida de Quoridor no servidor.
-
-        Requisitos: Inicia apenas quando houver exatamente 2 ou 4 jogadores conectados no lobby.
+        """Inicia a partida de Quoridor no servidor quando há 2 ou 4 jogadores no lobby.
 
         Args:
-            player_id: ID opcional do jogador que acionou o início da partida.
+            player_id: ID opcional do jogador que solicitou o início.
 
         Returns:
             Tupla (sucesso, mensagem_resultado).
         """
         with self.lock:
-            if self.game is not None and self.game.game_started and self.game.winner is None:
+            if (
+                self.game is not None
+                and self.game.game_started
+                and self.game.winner is None
+            ):
                 return False, "A partida já está em andamento!"
 
-            num_players = len(self.lobby)
+            num_players = self.lobby.count()
             if num_players not in ALLOWED_PLAYER_COUNTS:
                 msg = (
                     f"A partida só pode ser iniciada com 2 ou 4 jogadores! "
@@ -418,10 +339,9 @@ class QuoridorServer:
                 logger.warning(msg)
                 return False, msg
 
-            # Cria o jogo principal do Quoridor ordenando por ID do lobby
-            self.lobby.sort(key=lambda p: p["id"])
+            players = self.lobby.get_players()
             self.game = QuoridorGame(num_players=num_players)
-            for p in self.lobby:
+            for p in players:
                 assigned_id = self.game.add_player(p["name"])
                 logger.debug(
                     "Jogador '%s' vinculado ao ID de jogo %d", p["name"], assigned_id
@@ -475,7 +395,6 @@ class QuoridorServer:
             p_name = self.game.players[player_id].name
             state = self._get_game_state_unlocked(msg)
 
-        # Broadcast da alteração de estado
         if winner:
             logger.info("Fim de jogo! Jogador %d (%s) venceu!", winner, winner_name)
             self._broadcast("on_game_over", winner, winner_name, state)
@@ -533,27 +452,16 @@ class QuoridorServer:
         return True, msg
 
     # -------------------------------------------------------------------------
-    # Consultas de Estado
+    # Consultas de Estado e Utilidades
     # -------------------------------------------------------------------------
 
     def get_game_state(self) -> dict[str, Any]:
-        """Retorna o estado completo atual do jogo e do lobby.
-
-        Returns:
-            Dicionário serializado com os dados da sala e do jogo.
-        """
+        """Retorna o estado completo atual do jogo e do lobby."""
         with self.lock:
             return self._get_game_state_unlocked()
 
     def get_valid_moves(self, player_id: int) -> list[tuple[int, int]]:
-        """Retorna os movimentos válidos para o jogador no turno atual.
-
-        Args:
-            player_id: ID do jogador a ser consultado.
-
-        Returns:
-            Lista de coordenadas (linha, coluna) válidas.
-        """
+        """Retorna os movimentos válidos para o jogador no turno atual."""
         with self.lock:
             if self.game is None or not self.game.game_started or self.game.winner:
                 return []
@@ -564,16 +472,7 @@ class QuoridorServer:
     def can_place_wall(
         self, player_id: int, position: tuple[int, int] | list[int], orientation: str
     ) -> tuple[bool, str]:
-        """Verifica preventivamente se a colocação de uma parede é válida.
-
-        Args:
-            player_id: ID do jogador consultante.
-            position: Posição avaliada (0-7, 0-7).
-            orientation: 'H' ou 'V'.
-
-        Returns:
-            Tupla (eh_valido, motivo).
-        """
+        """Verifica preventivamente se a colocação de uma parede é válida."""
         with self.lock:
             if self.game is None or not self.game.game_started:
                 return False, "O jogo ainda não começou!"
@@ -584,17 +483,12 @@ class QuoridorServer:
             return self.game.can_place_wall(player_id, wall)
 
     def reset_game(self, player_id: int | None = None) -> tuple[bool, str]:
-        """Reinicia o jogo, retornando ao lobby apenas com os jogadores conectados mantidos.
-
-        Args:
-            player_id: ID opcional do jogador que solicitou o reinício.
-
-        Returns:
-            Tupla (sucesso, mensagem_resultado).
-        """
+        """Reinicia o jogo, retornando ao lobby apenas com os jogadores conectados mantidos."""
         with self.lock:
             self.game = None
-            self._reorganize_lobby_unlocked()
+            id_updates = self.lobby.reorganize()
+            for uri, new_id in id_updates:
+                self.broadcaster.notify_one(uri, "on_assigned_id", new_id)
             msg = "A partida foi reiniciada para o lobby."
             state = self._get_game_state_unlocked(msg)
 
@@ -624,24 +518,18 @@ def start_server(
     ns_port: int | None = DEFAULT_NS_PORT,
     auto_start_ns: bool = True,
 ) -> tuple[Pyro5.api.Daemon, QuoridorServer, threading.Thread | None]:
-    """Inicializa o servidor Pyro5, registra no Name Server e inicia o loop de atendimento.
-
-    Se `auto_start_ns` for True e o Name Server não estiver em execução, inicia uma thread
-    com o Name Server embutido automaticamente.
+    """Inicializa o servidor Pyro5, registra no Name Server e inicia o atendimento.
 
     Args:
-        server_name: Nome do serviço a ser registrado no Name Server.
-        host: Interface de rede para o Daemon do servidor (padrão: 'localhost').
+        server_name: Nome do serviço no Name Server (padrão: 'quoridor.servidor').
+        host: Interface de rede para o Daemon do servidor.
         port: Porta para o Daemon (0 para seleção automática).
         ns_host: Endereço do Name Server Pyro5.
         ns_port: Porta do Name Server Pyro5.
-        auto_start_ns: Se True, inicializa automaticamente um Name Server embutido caso necessário.
+        auto_start_ns: Se True, inicia automaticamente um Name Server embutido caso necessário.
 
     Returns:
         Tupla (daemon_pyro, instancia_servidor, thread_name_server_opcional).
-
-    Raises:
-        RuntimeError: Se o Name Server não for encontrado e auto_start_ns for False.
     """
     configure_pyro()
     from Pyro5.api import config
@@ -653,7 +541,6 @@ def start_server(
 
     ns_thread: threading.Thread | None = None
 
-    # Tenta localizar o Name Server (pyro5-ns)
     try:
         ns = Pyro5.api.locate_ns(host=ns_host, port=ns_port)
         logger.info(
@@ -682,12 +569,10 @@ def start_server(
                 f"Inicie o Name Server com o comando 'pyro5-ns' ou utilize a flag --auto-ns."
             )
 
-    # Cria o daemon Pyro5 do Servidor
     daemon = Pyro5.api.Daemon(host=host, port=port)
     server_instance = QuoridorServer()
     server_uri = daemon.register(server_instance)
 
-    # Registra no Name Server com nome amigável
     ns.register(server_name, server_uri)
 
     logger.info("=" * 60)
