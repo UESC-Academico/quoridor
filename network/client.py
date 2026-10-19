@@ -150,6 +150,7 @@ class QuoridorClient:
         self.callback_uri: Pyro5.api.URI | None = None
 
         self._lock = threading.Lock()
+        self._state_event = threading.Event()
         self.latest_state: dict[str, Any] = {}
         self.listeners: list[Callable[[str, Any], None]] = []
         self.is_connected = False
@@ -195,6 +196,7 @@ class QuoridorClient:
                     self.latest_state = data
 
             listeners_copy = list(self.listeners)
+            self._state_event.set()
 
         for listener in listeners_copy:
             try:
@@ -284,14 +286,33 @@ class QuoridorClient:
             method = getattr(self.server_proxy, method_name)
             return method(*args, **kwargs)
 
+    def _wait_for_state_sync(self, timeout: float = 1.0) -> None:
+        """Aguarda a sincronização do estado local via callback ou recorre ao RPC de fallback.
+
+        Garante que chamadas que alteram o estado da partida (ex: move_player, place_wall)
+        só retornem após o `latest_state` local ter sido devidamente atualizado.
+        """
+        if not self._state_event.wait(timeout=timeout):
+            try:
+                fresh_state = self._call_remote("get_game_state")
+                with self._lock:
+                    self.latest_state = fresh_state
+                    self._state_event.set()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Falha ao sincronizar estado via fallback RPC: %s", exc)
+
     def start_game(self) -> tuple[bool, str]:
         """Solicita ao servidor o início da partida.
 
         Returns:
             Tupla (sucesso, mensagem_servidor).
         """
+        self._state_event.clear()
         try:
-            return self._call_remote("start_game", self.player_id)
+            res = self._call_remote("start_game", self.player_id)
+            if isinstance(res, (tuple, list)) and res[0]:
+                self._wait_for_state_sync()
+            return tuple(res)
         except Exception as exc:  # noqa: BLE001
             return False, str(exc)
 
@@ -306,8 +327,12 @@ class QuoridorClient:
         Returns:
             Tupla (sucesso, mensagem_servidor).
         """
+        self._state_event.clear()
         try:
-            return self._call_remote("move_player", self.player_id, list(new_position))
+            res = self._call_remote("move_player", self.player_id, list(new_position))
+            if isinstance(res, (tuple, list)) and res[0]:
+                self._wait_for_state_sync()
+            return tuple(res)
         except Exception as exc:  # noqa: BLE001
             return False, str(exc)
 
@@ -323,10 +348,14 @@ class QuoridorClient:
         Returns:
             Tupla (sucesso, mensagem_servidor).
         """
+        self._state_event.clear()
         try:
-            return self._call_remote(
+            res = self._call_remote(
                 "place_wall", self.player_id, list(position), orientation
             )
+            if isinstance(res, (tuple, list)) and res[0]:
+                self._wait_for_state_sync()
+            return tuple(res)
         except Exception as exc:  # noqa: BLE001
             return False, str(exc)
 
@@ -358,8 +387,12 @@ class QuoridorClient:
         Returns:
             Tupla (sucesso, mensagem_servidor).
         """
+        self._state_event.clear()
         try:
-            return self._call_remote("reset_game", self.player_id)
+            res = self._call_remote("reset_game", self.player_id)
+            if isinstance(res, (tuple, list)) and res[0]:
+                self._wait_for_state_sync()
+            return tuple(res)
         except Exception as exc:  # noqa: BLE001
             return False, str(exc)
 

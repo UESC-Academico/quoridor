@@ -260,6 +260,8 @@ def run_network_cli(client: QuoridorClient) -> None:
             ok, msg = client.start_game()
             if not ok:
                 mensagem_acao = f"Erro: {msg}"
+            else:
+                update_event.clear()
 
     # 2. Partida em Andamento
     while True:
@@ -315,20 +317,29 @@ def run_network_cli(client: QuoridorClient) -> None:
             if tipo == "sair":
                 break
             elif tipo == "mover":
-                _, msg = client.move_player(dados)
+                ok, msg = client.move_player(dados)
                 mensagem_acao = msg
+                if ok:
+                    update_event.clear()
             elif tipo == "parede":
                 pos, ori = dados
-                _, msg = client.place_wall(pos, ori)
+                ok, msg = client.place_wall(pos, ori)
                 mensagem_acao = msg
+                if ok:
+                    update_event.clear()
             elif tipo == "invalido":
                 mensagem_acao = f"Erro: {dados}"
         else:
-            # Vez do adversário: aguarda callback do servidor
+            # Vez do adversário: aguarda callback do servidor sem redesenhar desnecessariamente
             jogador_vez = players_data.get(turn, {}).get("name", f"Jogador {turn}")
             print(f"\nAguardando a jogada de {jogador_vez} (P{turn})...")
-            update_event.wait(timeout=2.0)
-            update_event.clear()
+            while client.is_connected:
+                if update_event.wait(timeout=1.0):
+                    update_event.clear()
+                    break
+                current_state = client.get_game_state()
+                if current_state != state:
+                    break
 
     client.disconnect()
     print("\nDesconectado do servidor.")
