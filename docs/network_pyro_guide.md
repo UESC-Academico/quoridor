@@ -1,268 +1,258 @@
-# Guia de Revisão: Arquitetura de Rede e Pyro5 no Quoridor
+# Guia Teórico e Prático: Sistemas Distribuídos e Pyro5 no Quoridor
 
-Este documento apresenta uma revisão conceitual e prática da camada de rede do projeto Quoridor, dividido em duas partes:
-
-1. **Parte 1: Funcionamento Didático do Pyro5** (conceitos essenciais de RPC e objetos distribuídos).
-2. **Parte 2: Aplicação Prática no Quoridor** (como o servidor, cliente, callbacks e protocolos foram implementados).
+Este documento fornece uma visão aprofundada dos conceitos de **Sistemas Distribuídos (SD)** e do framework **Pyro5 (Python Remote Objects)** aplicados no desenvolvimento do Quoridor Multiplayer. Ele foi elaborado para servir tanto como fundamentação teórica quanto como roteiro técnico de apresentação acadêmica.
 
 ---
 
-## Parte 1: O que é o Pyro5 e como ele funciona (Visão Didática)
+## 1. Visão Geral da Arquitetura Distribuída
 
-### 1. A Analogia do Restaurante e Telefone
-
-Em uma aplicação Python local, quando um objeto executa um método, tudo roda na mesma memória RAM e processador:
-
-```python
-jogo = Jogo()
-jogo.mover(1, 4)  # Executado diretamente na sua máquina
-```
-
-Para transformar esse jogo em multiplayer distribuído (onde jogadores em computadores distintos interagem com o mesmo tabuleiro), é necessário que um computador envie instruções para o outro.
-
-Tradicionalmente, isso exigiria programação com sockets TCP de baixo nível: abrir portas, gerenciar buffers de bytes, empacotar mensagens e tratar falhas de fragmentação.
-
-O **Pyro (Python Remote Objects)** abstrai toda essa complexidade através de **RPC (Remote Procedure Call / Invocação de Método Remoto)**:
-
-* Para o código do cliente, a chamada se parece com uma chamada de método Python comum: `servidor.move_player(...)`.
-* Por baixo dos panos, o Pyro intercepta essa invocação, empacota os argumentos, transmite-os via TCP até a máquina remota, executa a função lá dentro e devolve o resultado.
-
----
-
-### 2. Os Quatro Pilares do Pyro5
-
-A comunicação no Pyro se apoia em quatro componentes fundamentais:
+O Quoridor Multiplayer implementa uma **Arquitetura Baseada em Objetos Distribuídos** operando sob o modelo **Cliente-Servidor com Callbacks Reversos** (*Two-Way RPC / Distributed Observer*).
 
 ```text
-+-------------------------------------------------------------------+
-|                        1. Name Server                             |
-|       "Lista telefônica" (ex: "quoridor.servidor" -> URI)         |
-+-------------------------------------------------------------------+
-             ^                                      ^
-   Registra  |                                      | Consulta
-   ao subir  |                                      | ao conectar
-             |                                      |
-+---------------------------+        +------------------------------+
-| 2. Servidor (Daemon)      |  TCP   | 4. Cliente (Proxy)           |
-| Escuta conexões em porta  |<=======| O "dublê" do objeto que      |
-| e executa 3. Objeto Remoto|        | recebe chamadas locais       |
-+---------------------------+        +------------------------------+
+┌────────────────────────────────────────────────────────────────────────┐
+│                        Pyro5 Name Server                               │
+│              Serviço de Nomes / Descoberta Dinâmica                    │
+│             Registra: "quoridor.servidor" -> URI de Rede               │
+└────────────────────────────────────▲───────────────────────────────────┘
+                                     │
+                 1. Registra URI     │ 2. Consulta URI
+                 ao inicializar      │ ao conectar
+                                     │
+      ┌──────────────────────────────┴──────────────────────────────┐
+      │                                                             │
+┌─────┴────────────────────────┐             ┌──────────────────────┴─────┐
+│       SERVIDOR PYRO5         │             │       CLIENTE PYRO5        │
+│                              │             │                            │
+│ ┌──────────────────────────┐ │             │ ┌────────────────────────┐ │
+│ │  QuoridorServer          │ │   RPC (TCP) │ │ QuoridorClient         │ │
+│ │  (Autoridade Central)    │ │◄────────────┼─┤ (Proxy de Chamadas)    │ │
+│ └──────────────────────────┘ │             │ └────────────────────────┘ │
+│                              │             │                            │
+│ ┌──────────────────────────┐ │  Callbacks  │ ┌────────────────────────┐ │
+│ │  Broadcaster             │─┼────────────►│ │ GameClientCallback     │ │
+│ │  (Notificações oneway)   │ │  (oneway)   │ │ (Daemon Local)         │ │
+│ └──────────────────────────┘ │             │ └────────────────────────┘ │
+│                              │             │                            │
+│ ┌──────────────────────────┐ │  Heartbeat  │ ┌────────────────────────┐ │
+│ │  ping()                  │ │◄────────────┼─┤ ClientHeartbeatMonitor │ │
+│ │  (Liveness Probe)        │ │    (ping)   │ │ (Thread de 2.0s)       │ │
+│ └──────────────────────────┘ │             │ └────────────────────────┘ │
+└──────────────────────────────┘             └────────────────────────────┘
 ```
 
-#### A. Objeto Remoto (`@Pyro5.api.expose`)
+### Características Centrais
 
-É a classe Python normal que executa a lógica do sistema. Por segurança, o Pyro exige que qualquer classe ou método acessível via rede seja decorado com `@Pyro5.api.expose`. Isso impede que usuários remotos executem funções arbitrárias ou comandos perigosos do sistema.
-
-#### B. Daemon (`Pyro5.api.Daemon`)
-
-Funciona como o "ouvinte" ou "garçom" do servidor:
-
-* Abre um socket TCP em uma porta da máquina.
-* Fica escutando requisições em um loop de eventos.
-* Ao receber uma requisição de método, localiza a instância do objeto remoto registrado, executa a função com os argumentos recebidos e serializa o retorno de volta para a rede.
-
-#### C. Proxy (`Pyro5.api.Proxy`)
-
-É o "dublê" ou procurador do objeto que reside na máquina do cliente:
-
-* O cliente não tem a instância real do servidor, apenas uma referência de rede (URI).
-* Ao chamar `proxy.move_player(pos)`, o Proxy empacota a chamada, envia pela rede ao Daemon, bloqueia temporariamente aguardando a resposta e retorna o valor para a aplicação como se fosse local.
-
-#### D. Name Server (`pyro5-ns`)
-
-Funciona como a "lista telefônica" ou servidor DNS do Pyro:
-
-* Sem o Name Server, o cliente precisaria conhecer previamente o IP e a porta dinâmica exata do objeto remoto (ex: `PYRO:obj_48bf9a@192.168.1.50:58291`).
-* Com o Name Server, o servidor publica seu serviço com um nome amigável (ex: `"quoridor.servidor"`). O cliente faz a busca por `PYRONAME:quoridor.servidor` e o Name Server devolve o endereço de conexão correto de forma transparente.
+1. **Servidor Autoritativo (*Authoritative Server*)**: O servidor mantém a única fonte da verdade (*Single Source of Truth*) do estado do jogo (tabuleiro 9x9, peões, paredes, turnos e regras). O cliente não toma decisões de validação de jogadas; ele apenas emite intenções de movimento.
+2. **Comunicação Bidirecional por RPC**: Clientes invocam métodos no servidor via RPC síncrono; o servidor notifica clientes via callbacks assíncronos (*push notifications*).
+3. **Transparência de Acesso e Localização**: Clientes e servidor interagem com objetos remotos como se fossem locais, resolvendo endereços dinamicamente via serviço de nomes.
 
 ---
 
-### 3. Recursos Avançados Cruciais para Jogos
+## 2. Conceitos Fundamentais de Sistemas Distribuídos Aplicados
 
-#### Callbacks Bidirecionais
+### 2.1. Invocação de Método Remoto (RPC / RMI)
 
-Em sistemas cliente-servidor tradicionais (como APIs REST), o cliente sempre pergunta e o servidor responde. Porém, em um jogo de tabuleiro com turnos:
+* **Conceito**: Em vez de gerenciar sockets TCP manuais com envio de buffers de bytes e delimitação de pacotes, a aplicação utiliza **RPC (Remote Procedure Call)**.
+* **No Projeto**:
+  * Quando um jogador move seu peão, o cliente executa:
 
-* Quando o Jogador 1 move uma peça, o Servidor precisa avisar ativamente o Jogador 2 para que seu tabuleiro seja atualizado.
-* No Pyro, isso é resolvido fazendo com que **o próprio cliente também suba um mini-Daemon**. Ao se registrar no servidor, o cliente entrega a sua própria URI de callback. Dessa forma, o servidor cria um Proxy apontando de volta para cada cliente, permitindo mensagens *push* instantâneas.
+    ```python
+    sucesso, msg = client.move_player((linha, coluna))
+    ```
 
-#### Chamadas Não Bloqueantes (`@Pyro5.api.oneway`)
+  * Internamente, o Pyro5 empacota a chamada (*marshalling*), envia pela rede via TCP, aciona o método `QuoridorServer.move_player` na máquina do servidor e devolve a resposta decodificada (*unmarshalling*).
 
-Normalmente, uma chamada RPC bloqueia quem a chamou até que o destinatário termine o processamento e envie uma resposta.
+### 2.2. Transparência de Localização e Serviço de Nomes (*Naming Service*)
 
-* Se o servidor fizesse chamadas síncronas para notificar 4 jogadores sobre uma jogada, a lentidão ou lag de um único jogador congelaria o turno de todos os outros.
-* Com o decorador `@Pyro5.api.oneway`, o servidor despacha a notificação para o cliente sem esperar confirmação ("fire-and-forget"). O fluxo da partida continua sem atrasos.
+* **Conceito**: Sistemas distribuídos modernos desacoplam os clientes do conhecimento prévio de endereços IP físicos e portas efêmeras.
+* **No Projeto**:
+  * O **Pyro5 Name Server (`pyro5-ns`)** atua como um catálogo de diretório (*DNS de objetos*).
+  * O servidor se registra com a identificação amigável: `PYRONAME:quoridor.servidor`.
+  * Os clientes conectam-se usando unicamente esse identificador lógico. Caso o servidor mude de máquina ou porta, nenhum cliente precisa alterar suas configurações.
+  * O projeto inclui inicialização automática de um Name Server embutido (`start_ns_loop`) caso nenhum esteja em execução no ambiente.
 
-#### Modelo de Instância Única (`instance_mode="single"`)
+### 2.3. Padrão Proxy / Stub e Esqueleto (*Stub/Skeleton Pattern*)
 
-Por padrão, alguns frameworks de RPC instanciam um objeto novo para cada conexão recebida.
-Para um jogo multiplayer com estado compartilhado, precisamos garantir que todos os jogadores interajam com a mesma partida. O decorador `@Pyro5.api.behavior(instance_mode="single")` instrui o Pyro a manter uma única instância global do servidor (*Singleton*).
+* **Conceito**: A interface entre as camadas locais e a rede é mediada por intermediários.
+* **No Projeto**:
+  * **Proxy do Cliente (`Pyro5.api.Proxy`)**: Objeto local que implementa a mesma interface do servidor. Quando um método é chamado no proxy, ele serializa a chamada e aguarda o retorno.
+  * **Daemon do Servidor (`Pyro5.api.Daemon`)**: O ouvinte TCP que aceita conexões, localiza a instância registrada e executa o método real.
 
-#### Serialização Customizada (Serpent)
+### 2.4. Serialização de Dados (*Marshalling / Serialization*)
 
-O tráfego de dados na rede requer que objetos complexos sejam transformados em sequências de bytes e reconstruídos do outro lado. O Pyro utiliza a biblioteca Serpent. Para classes próprias (como `Wall` e `Player`), registramos conversores que transformam a classe em dicionário e vice-versa.
+* **Conceito**: Estruturas de dados em memória precisam ser convertidas em formatos portáteis de bytes para transmissão por rede e reconstruídas no destino.
+* **No Projeto**:
+  * O Pyro utiliza o serializador **Serpent** (baseado em literais Python seguros).
+  * Em `network/config.py`, registramos serializadores customizados para as entidades do domínio (`Wall` e `Player`):
 
----
+    ```python
+    Pyro5.api.register_class_to_dict(Wall, lambda w: {"position": tuple(w.position), "orientation": w.orientation})
+    Pyro5.api.register_dict_to_class("core.models.Wall", lambda _cn, d: Wall(tuple(d["position"]), d["orientation"]))
+    ```
 
-## Parte 2: Utilização Prática no Quoridor
+  * Isso garante que tipos complexos transitem de forma transparente entre nós da rede.
 
-No projeto, a camada de comunicação está concentrada no pacote `network/`:
+### 2.5. Concorrência e Regiões Críticas (*Mutual Exclusion*)
 
-```text
-quoridor/network/
-├── config.py     # Configurações globais, serialização Serpent e constantes
-├── protocol.py   # Dicionário serializável do estado do jogo (ponte core <-> rede)
-├── server.py     # Servidor central Pyro5 com controle de concorrência
-└── client.py     # Cliente Pyro5 com Daemon local de callbacks e padrão Observer
-```
+* **Conceito**: Em um servidor multithreaded que recebe requisições de múltiplos nós concorrentes, o acesso ao estado compartilhado deve ser sincronizado para evitar condições de corrida (*race conditions*).
+* **No Projeto**:
+  * O `QuoridorServer` adota o padrão **Singleton de Rede** (`@Pyro5.api.behavior(instance_mode="single")`).
+  * Cada chamada de cliente chega em uma thread separada gerida pelo Daemon do Pyro.
+  * Todas as operações que leem ou modificam o lobby e o tabuleiro adquirem `self.lock = threading.Lock()`.
+  * Isso impede, por exemplo, que dois jogadores coloquem barreiras na mesma ranhura simultaneamente ou que a vez seja alternada incorretamente.
 
----
+### 2.6. Semânticas de Comunicação: Síncrona vs. Assíncrona (*Oneway RPC*)
 
-### 1. Configuração e Serialização (`network/config.py`)
-
-A função `configure_pyro()` registra a serialização bidirecional das dataclasses do domínio:
-
-```python
-# Serialização da parede (Wall -> dict)
-Pyro5.api.register_class_to_dict(
-    Wall,
-    lambda w: {
-        "__class__": "core.models.Wall",
-        "position": tuple(w.position),
-        "orientation": w.orientation,
-    },
-)
-
-# Desserialização da parede (dict -> Wall)
-Pyro5.api.register_dict_to_class(
-    "core.models.Wall",
-    lambda _cn, d: Wall(tuple(d["position"]), d["orientation"]),
-)
-```
-
-Isso garante que `Wall` e `Player` possam ser enviados e recebidos diretamente nos métodos remotos sem conversões manuais espalhadas pelo código.
+* **Conceito**: Chamadas síncronas bloqueiam o chamador até que o receptor responda. Chamadas assíncronas (*fire-and-forget*) liberam o emissor imediatamente após o envio da mensagem no canal.
+* **No Projeto**:
+  * **Cliente -> Servidor (Síncrono)**: As ações de jogo (`move_player`, `place_wall`, `start_game`) são síncronas porque o jogador precisa saber imediatamente se o movimento foi legal ou rejeitado pelas regras.
+  * **Servidor -> Cliente (Assíncrono via `@Pyro5.api.oneway`)**: As notificações de broadcast (`on_game_state_changed`, `on_player_joined`, etc.) são decoradas com `@Pyro5.api.oneway`. O servidor despacha o evento para todos os clientes sem esperar resposta. Isso impede que a lentidão ou lag de um jogador atrase a partida dos outros.
 
 ---
 
-### 2. O Servidor Central (`network/server.py`)
+## 3. Tolerância a Falhas e Detecção de Quedas
 
-O servidor atua como **autoridade única da partida** (*Authoritative Server*). Nenhuma regra ou movimento é decidido pelo cliente.
+Um dos maiores desafios em Sistemas Distribuídos é lidar com **falhas por parada (*Fail-Stop / Crash Failures*)**. O projeto implementa tolerância a falhas em ambas as pontas:
 
-#### Concorrência Thread-Safe com `threading.Lock`
+### 3.1. Detecção e Tratamento de Queda do Cliente (Lado Servidor)
 
-Múltiplas chamadas RPC de clientes diferentes chegam em threads concorrentes no servidor. Para evitar condições de corrida (por exemplo, dois jogadores tentarem colocar paredes na mesma ranhura simultaneamente), o servidor protege todas as mutações com `self.lock`:
+* **Problema**: Um jogador pode fechar a janela, encerrar o processo (Ctrl+C) ou sofrer perda de conexão com a internet durante uma partida.
+* **Solução Implementada**:
+  1. Durante o broadcast em `Broadcaster.broadcast()`, cada chamada a um cliente remoto utiliza timeout rígido de 3.0s (`proxy._pyroTimeout = 3.0`).
+  2. Se a chamada levantar exceção de socket/comunicação, o cliente é marcado na lista de clientes inativos (`dead_players`).
+  3. O servidor aciona `_eliminate_player_unlocked`:
+     * O jogador caído é desregistrado do lobby e da partida.
+     * Se restarem jogadores suficientes, a partida prossegue e o turno avança para o próximo ativo.
+     * Se restar apenas **1 jogador**, ele vence imediatamente por **W.O.** (*Walkover*).
+     * Se restarem **0 jogadores**, o servidor redefine `self.game = None` e limpa o lobby, evitando bloqueio residual.
 
-```python
-@Pyro5.api.expose
-@Pyro5.api.behavior(instance_mode="single")
-class QuoridorServer:
-    def __init__(self):
-        self.lock = threading.Lock()
-        self.game = None
-        self.lobby = []
-        self.callbacks = {}  # {player_id: callback_uri}
-```
+### 3.2. Detecção e Tratamento de Queda do Servidor (Lado Cliente)
 
-#### Broadcast Resiliente e Eliminação por Desconexão
+* **Problema**: Se o servidor cair durante o turno do adversário, o cliente ficaria travado aguardando eventos que nunca chegariam. Se o jogador tentasse clicar no tabuleiro, a thread do Pygame congelaria no Windows esperando resposta.
+* **Solução Implementada**:
+  1. **Monitor de Heartbeat Ativo (`ClientHeartbeatMonitor`)**:
+     * Uma thread em segundo plano realiza ping a cada 2 segundos (`proxy.ping()`).
+     * Utiliza um proxy Pyro5 isolado com timeout de 2.0s para não interferir nas chamadas da thread gráfica.
+  2. **Detecção Imediata em RPC**:
+     * Se qualquer chamada remota (`move_player`, etc.) falhar com erro de comunicação, o evento `"connection_lost"` é disparado na hora.
+  3. **Timeout Reduzido para 2.5s**:
+     * `self.server_proxy._pyroTimeout` foi reduzido de 10.0s para 2.5s, impedindo que a janela do Pygame congele com o aviso "Não respondendo".
+  4. **Overlay Visual Modal**:
+     * A GUI escurece a tela e renderiza um aviso elegante: *"CONEXÃO COM O SERVIDOR PERDIDA - Pressione ESC para sair"*.
+     * Os cliques no tabuleiro são bloqueados para evitar chamadas de rede travadas.
+  5. **Encerramento Gracioso no CLI**:
+     * Os loops de espera monitoram `client.is_connected` e encerram graciosamente com aviso no terminal.
 
-Quando uma ação acontece, o servidor precisa notificar todos os clientes conectados através de `_broadcast()`:
+### 3.3. Ciclo de Vida e Autorreset do Servidor
 
-1. O servidor itera sobre o dicionário de callbacks `self.callbacks`.
-2. Para cada cliente, cria um `Pyro5.api.Proxy(uri)` com timeout configurado de 3 segundos (`proxy._pyroTimeout = 3.0`).
-3. Invoca o método do callback (ex: `on_game_state_changed`).
-4. Se ocorrer falha de comunicação (cliente fechou a janela ou caiu a internet), o jogador é inserido na lista `dead_players`.
-5. Em seguida, o método `_eliminate_player_unlocked` remove o jogador, atualiza o turno entre os remanescentes e, se restar apenas um jogador ativo, encerra a partida declarando vitória por W.O.
-
-#### Name Server Embutido Automático
-
-A função `start_server()` verifica se já existe um Name Server ativo na rede. Caso não encontre, ela inicializa em background uma thread com `Pyro5.api.start_ns_loop()`. Isso permite iniciar o servidor sem precisar rodar comandos externos adicionais.
-
----
-
-### 3. O Cliente e o Manipulador de Callbacks (`network/client.py`)
-
-O cliente gerencia a conexão com o servidor e provê os eventos para as interfaces visuais (GUI e CLI).
-
-#### `GameClientCallback` (Recepção de Notificações)
-
-Esta classe é exposta ao Pyro no cliente e contém os métodos que o servidor aciona remotamente. Todos são anotados com `@Pyro5.api.oneway`:
-
-* `on_player_joined(player_info, lobby_players)`: Novo jogador entrou na sala.
-* `on_player_left(player_id, lobby_players)`: Jogador desconectou.
-* `on_game_started(initial_state)`: A partida começou.
-* `on_game_state_changed(game_state, message)`: O tabuleiro foi modificado (movimento, parede ou turno).
-* `on_game_over(winner_id, winner_name, game_state)`: Vitória confirmada.
-* `on_error(message)`: Notificação de erro.
-
-#### `QuoridorClient` e o Daemon Secundário
-
-No momento da conexão (`client.connect()`):
-
-1. O cliente instancia seu próprio `Pyro5.api.Daemon`.
-2. Registra a instância de `GameClientCallback` nesse daemon e obtém sua `callback_uri`.
-3. Inicia o loop de atendimento do daemon (`daemon.requestLoop`) em uma **thread secundária de segundo plano (`threading.Thread(daemon=True)`)**. Isso impede que o cliente trave o loop de desenho do Pygame ou do terminal.
-4. Conecta-se ao servidor pelo Name Server (`PYRONAME:quoridor.servidor`).
-5. Invoca `register_player(player_name, callback_uri)` entregando seu endereço de callback.
-
-#### Integração Desacoplada com a Interface (Observer Pattern)
-
-As interfaces gráficas (`ui/gui.py`) e de console (`ui/cli.py`) não sabem detalhes do Pyro. Elas apenas registram funções ouvintes usando `client.add_listener(meu_callback)`. Quando um evento chega da rede, o `QuoridorClient` o repassa para os ouvintes registrados, que atualizam a tela.
+* **Problema**: Se os jogadores saírem sem pressionar ENTER para reiniciar, o servidor poderia ficar preso no modo "partida em andamento", recusando novas conexões.
+* **Solução Implementada**:
+  * Se `not self.lobby.has_active_callbacks()`: o servidor é resetado automaticamente para o estado inicial de espera.
+  * Se um novo cliente conectar e a partida anterior já tiver um vencedor (`self.game.winner is not None`): o servidor reseta a partida concluída e recebe os jogadores no lobby.
 
 ---
 
-### 4. Protocolo e Sincronização (`network/protocol.py`)
+## 4. Diagramas de Sequência e Interação
 
-Para manter o tráfego de rede leve e desacoplado:
-
-* `serialize_game_state()`: Transforma a instância ativa de `QuoridorGame` e o lobby em um dicionário serializável contendo apenas os dados essenciais (posições dos jogadores, paredes posicionadas, jogador da vez e mensagens de status).
-* `sync_game_from_state()`: No lado do cliente, reconstrói ou atualiza uma instância local de `QuoridorGame` a partir do dicionário recebido para que a interface de renderização possa desenhar as posições com precisão.
-
----
-
-### 5. Diagrama de Sequência de uma Jogada
-
-O diagrama abaixo ilustra o ciclo completo de comunicação quando o Jogador 1 realiza um movimento:
+### 4.1. Conexão do Cliente e Registro de Callbacks
 
 ```mermaid
 sequenceDiagram
     autonumber
-    actor Alice as Jogador 1 (Alice)
-    participant C1 as QuoridorClient 1
-    participant S as QuoridorServer (Lock)
-    participant Game as QuoridorGame (Core)
-    participant C2 as QuoridorClient 2
-    actor Bob as Jogador 2 (Bob)
+    actor Player as Jogador
+    participant Client as QuoridorClient
+    participant Daemon as Daemon Local do Cliente
+    participant NS as Pyro5 Name Server
+    participant Server as QuoridorServer (Daemon)
 
-    Alice->>C1: Clica na coordenada (1, 4)
-    C1->>S: RPC move_player(player_id=1, (1, 4))
-    Note over S: Adquire Lock exclusivo
-    S->>Game: move_player(1, (1, 4))
-    Game-->>S: Movimento validado com sucesso!
-    S->>S: serialize_game_state()
-    Note over S: Libera Lock
+    Player->>Client: Inicia aplicação (run_client.py)
+    Client->>Daemon: Inicializa Daemon local em thread secundária
+    Daemon-->>Client: URI de Callback gerada (ex: PYRO:obj@host:port)
     
-    par Broadcast oneway para Jogador 1
-        S-->>C1: Callback: on_game_state_changed(estado)
-        C1->>Alice: Redesenha tela (Peão movido)
-    and Broadcast oneway para Jogador 2
-        S-->>C2: Callback: on_game_state_changed(estado)
-        C2->>Bob: Redesenha tela ("Vez de Bob")
+    Client->>NS: Consulta "quoridor.servidor"
+    NS-->>Client: Retorna URI do Servidor
+    
+    Client->>Server: RPC register_player(nome, callback_uri)
+    Note over Server: Adquire Lock<br/>Registra no LobbyManager<br/>Armazena callback_uri
+    Server-->>Client: Retorna player_id e estado inicial
+    
+    par Inicia Heartbeat
+        Client->>Client: Inicia ClientHeartbeatMonitor (thread ping 2.0s)
+    and Broadcast para outros jogadores
+        Server-->>Daemon: Callback oneway: on_player_joined(...)
     end
+```
+
+### 4.2. Fluxo de Jogada e Notificação de Turno
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Alice as Jogador 1 (Vez)
+    participant C1 as Cliente 1
+    participant S as Servidor Quoridor
+    participant Game as QuoridorGame (Regras)
+    participant C2 as Cliente 2
+    actor Bob as Jogador 2
+
+    Alice->>C1: Clica na célula (2, 4)
+    C1->>S: RPC síncrono move_player(player_id=1, (2, 4))
+    Note over S: Lock adquirido
+    S->>Game: move_player(1, (2, 4))
+    Game-->>S: Movimento válido! Próximo turno: 2
+    S->>S: serialize_game_state()
+    Note over S: Lock liberado
+    S-->>C1: Retorna (True, "Sucesso")
+    
+    par Notificação oneway para Alice
+        S--)C1: Callback: on_game_state_changed(estado)
+        C1->>Alice: Atualiza peão na tela
+    and Notificação oneway para Bob
+        S--)C2: Callback: on_game_state_changed(estado)
+        C2->>Bob: Exibe "Sua vez, Bob" na tela
+    end
+```
+
+### 4.3. Detecção de Queda do Servidor via Heartbeat
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Server as Servidor Quoridor
+    participant HB as Thread Heartbeat (Cliente)
+    participant Client as QuoridorClient
+    participant GUI as QuoridorGUI (Pygame)
+
+    loop A cada 2 segundos
+        HB->>Server: RPC proxy.ping() (timeout 2.0s)
+        Server-->>HB: True (Operacional)
+    end
+
+    Note over Server: SERVIDOR CAI OU ENCERRA!
+
+    HB->>Server: RPC proxy.ping()
+    Note over HB: Timeout de 2.0s ou ConnectionRefused!
+    HB->>Client: _notify_connection_lost("Servidor inacessível")
+    Client->>Client: is_connected = False
+    Client->>GUI: Evento listener: "connection_lost"
+    GUI->>GUI: connection_lost = True
+    GUI->>GUI: Renderiza Overlay Modal de Alerta
+    Note over GUI: Cliques bloqueados<br/>Pressionar ESC fecha o jogo
 ```
 
 ---
 
-## Tabela Resumo para Revisão Rápida
+## 5. Tabela Resumo: Conceitos Teóricos x Implementação
 
-| Conceito / Componente | O que faz no Quoridor | Arquivo Principal |
-| --- | --- | --- |
-| **RPC (Pyro5)** | Permite chamar métodos remotos como se fossem locais | `network/client.py`, `network/server.py` |
-| **Name Server (`pyro5-ns`)** | Resolve nomes amigáveis (`quoridor.servidor`) para endereços de rede | `network/server.py` (`start_server`) |
-| **Daemon do Servidor** | Escuta conexões dos jogadores e executa as ações do jogo | `network/server.py` |
-| **Daemon do Cliente** | Roda em thread paralela para receber notificações (*callbacks*) | `network/client.py` |
-| **`@Pyro5.api.expose`** | Habilita métodos específicos para chamada via rede | `network/server.py`, `network/client.py` |
-| **`@Pyro5.api.oneway`** | Envia callbacks sem bloquear o remetente | `network/client.py` (`GameClientCallback`) |
-| **`instance_mode="single"`** | Garante que todos os clientes acessem o mesmo estado de partida | `network/server.py` (`QuoridorServer`) |
-| **`threading.Lock`** | Evita concorrência e condições de corrida entre jogadas | `network/server.py` |
-| **Serpent Serializer** | Converte classes `Wall` e `Player` em dicionários para tráfego TCP | `network/config.py` |
-| **Resiliência por Timeout** | Detecta desconexões e aplica vitória por W.O. | `network/server.py` (`_broadcast`) |
+| Conceito de Sistemas Distribuídos | Papel no Projeto Quoridor | Implementação no Código |
+| :--- | :--- | :--- |
+| **RPC / RMI** | Comunicação cliente-servidor sem gerenciamento manual de sockets | `Pyro5.api.Proxy` e chamadas `_call_remote` |
+| **Serviço de Nomes (*Naming Service*)** | Resolução dinâmica de nomes amigáveis para URIs de rede | `Pyro5.api.locate_ns` e `ns.register("quoridor.servidor")` |
+| **Publisher-Subscriber / Observer** | Notificações em tempo real sobre jogadas e entradas de jogadores | `GameClientCallback` e `Broadcaster.broadcast()` |
+| **Chamadas Assíncronas (*Oneway*)** | Evita que clientes lentos congelem o processamento do servidor | Anotação `@Pyro5.api.oneway` em todos os callbacks |
+| **Exclusão Mútua (*Mutex Lock*)** | Sincroniza concorrência de múltiplos clientes no servidor único | `threading.Lock()` envolvendo o estado em `QuoridorServer` |
+| **Singleton de Rede** | Garante que todos os clientes compartilhem a mesma partida | `@Pyro5.api.behavior(instance_mode="single")` |
+| **Serialização / Marshalling** | Empacotamento de dataclasses em estruturas portáteis de rede | Serializadores Serpent em `network/config.py` |
+| **Detecção Ativa (*Heartbeat / Probe*)** | Monitora a saúde do servidor a cada 2s para evitar telas congeladas | `ClientHeartbeatMonitor` em `network/heartbeat.py` |
+| **Tolerância a Falhas (*Fail-Stop*)** | Purga clientes mortos e declara vitória por W.O. sem travar partida | Detecção em `Broadcaster` e eliminação no servidor |
+| **Separação de Preocupações (SoC)** | Desacopla regras de jogo, I/O de rede e interface gráfica | Módulos `core/`, `network/` e `ui/` |
