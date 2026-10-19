@@ -602,6 +602,14 @@ class QuoridorServer:
         self._broadcast("on_game_state_changed", state, msg)
         return True, msg
 
+    def ping(self) -> bool:
+        """Verificação rápida de disponibilidade do servidor (heartbeat).
+
+        Returns:
+            True se o servidor estiver operacional.
+        """
+        return True
+
 
 # -----------------------------------------------------------------------------
 # Função Auxiliar de Inicialização do Servidor

@@ -35,6 +35,7 @@ class QuoridorGUI:
         self.is_network = client is not None
         self.my_player_id = client.player_id if client else None
         self._title_dirty = False
+        self.connection_lost: bool = False
 
         # 1. Configuração da Janela
         info = pygame.display.Info()
@@ -101,6 +102,10 @@ class QuoridorGUI:
             new_id = data.get("player_id") if isinstance(data, dict) else data
             self.my_player_id = new_id
             self._title_dirty = True
+        elif event_type == "connection_lost":
+            self.connection_lost = True
+            self.status_message = "Conexão com o servidor perdida!"
+            self.status_color = (230, 57, 70)
 
     def _apply_state(self, state: dict, message: str = "") -> None:
         """Aplica o dicionário de estado remoto na instância local do jogo.
@@ -730,6 +735,68 @@ class QuoridorGUI:
             (self.screen_width // 2 - inst_surf.get_width() // 2, instruction_y),
         )
 
+    def draw_connection_lost_overlay(self) -> None:
+        """Renderiza um aviso visual modal sobreposto quando a conexão com o servidor é perdida."""
+        # Escurece o fundo
+        dim_surf = pygame.Surface(
+            (self.screen_width, self.screen_height), pygame.SRCALPHA
+        )
+        dim_surf.fill((10, 12, 18, 215))
+        self.screen.blit(dim_surf, (0, 0))
+
+        # Painel central de alerta
+        panel_w = min(540, int(self.screen_width * 0.85))
+        panel_h = 200
+        panel_rect = pygame.Rect(
+            (self.screen_width - panel_w) // 2,
+            (self.screen_height - panel_h) // 2,
+            panel_w,
+            panel_h,
+        )
+
+        pygame.draw.rect(self.screen, CARD_BG_COLOR, panel_rect, border_radius=14)
+        pygame.draw.rect(
+            self.screen, (230, 57, 70), panel_rect, width=2, border_radius=14
+        )
+
+        # Título em destaque vermelho
+        title_surf = self.font_title.render(
+            "CONEXÃO COM O SERVIDOR PERDIDA", True, (230, 57, 70)
+        )
+        self.screen.blit(
+            title_surf,
+            (
+                panel_rect.centerx - title_surf.get_width() // 2,
+                panel_rect.y + 35,
+            ),
+        )
+
+        # Descrição explicativa
+        desc_surf = self.font_card_name.render(
+            "O servidor caiu ou a comunicação foi interrompida.",
+            True,
+            (210, 215, 230),
+        )
+        self.screen.blit(
+            desc_surf,
+            (
+                panel_rect.centerx - desc_surf.get_width() // 2,
+                panel_rect.y + 85,
+            ),
+        )
+
+        # Instrução para sair
+        hint_surf = self.font_hud.render(
+            "Pressione ESC para fechar a aplicação.", True, (255, 183, 3)
+        )
+        self.screen.blit(
+            hint_surf,
+            (
+                panel_rect.centerx - hint_surf.get_width() // 2,
+                panel_rect.y + 135,
+            ),
+        )
+
     # --- Tratamento de Input ---
 
     def handle_mouse_click(self, mouse_pos: tuple[int, int]) -> None:
@@ -738,7 +805,7 @@ class QuoridorGUI:
         Args:
             mouse_pos: Coordenadas (x, y) do clique do mouse na tela.
         """
-        if not self.game.game_started or self.game.winner:
+        if self.connection_lost or not self.game.game_started or self.game.winner:
             return
 
         if self.is_network and self.client and self.game.turn != self.client.player_id:
@@ -845,11 +912,15 @@ class QuoridorGUI:
                     self.update_dimensions(new_w, new_h)
 
                 elif event.type == pygame.KEYDOWN:
-                    if event.key == pygame.K_ESCAPE:
+                    if event.key == pygame.K_ESCAPE or (
+                        self.connection_lost
+                        and event.key in (pygame.K_RETURN, pygame.K_SPACE)
+                    ):
                         running = False
 
                     elif (
-                        event.key in (pygame.K_RETURN, pygame.K_SPACE)
+                        not self.connection_lost
+                        and event.key in (pygame.K_RETURN, pygame.K_SPACE)
                         and self.is_network
                         and not self.game.game_started
                     ):
@@ -877,7 +948,11 @@ class QuoridorGUI:
                         self.status_color = (200, 205, 220)
                         self.error_message_time = 0
 
-                    elif event.key == pygame.K_RETURN and self.game.winner:
+                    elif (
+                        event.key == pygame.K_RETURN
+                        and self.game.winner
+                        and not self.connection_lost
+                    ):
                         self.reset_game()
 
                 elif event.type == pygame.MOUSEBUTTONDOWN:
@@ -896,6 +971,9 @@ class QuoridorGUI:
                 self.draw_board(mouse_pos)
                 self.draw_sidebars()
                 self.draw_hud()
+
+            if self.connection_lost:
+                self.draw_connection_lost_overlay()
 
             if self._title_dirty:
                 self._title_dirty = False

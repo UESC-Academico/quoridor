@@ -213,12 +213,18 @@ def run_network_cli(client: QuoridorClient) -> None:
         client: Instância conectada e autenticada de `QuoridorClient`.
     """
     update_event = threading.Event()
-    client.add_listener(lambda event, data: update_event.set())
+
+    def on_event(event: str, data: Any) -> None:
+        if event == "connection_lost":
+            print("\n[!] AVISO: A conexão com o servidor foi perdida!")
+        update_event.set()
+
+    client.add_listener(on_event)
 
     mensagem_acao = ""
 
     # 1. Sala de Espera (Lobby)
-    while True:
+    while client.is_connected:
         state = client.get_game_state()
         if state.get("game_started"):
             break
@@ -251,6 +257,9 @@ def run_network_cli(client: QuoridorClient) -> None:
             client.disconnect()
             return
 
+        if not client.is_connected:
+            break
+
         tipo, _ = processar_comando(cmd_str)
         if tipo == "sair":
             client.disconnect()
@@ -264,7 +273,7 @@ def run_network_cli(client: QuoridorClient) -> None:
                 update_event.clear()
 
     # 2. Partida em Andamento
-    while True:
+    while client.is_connected:
         state = client.get_game_state()
         if not state.get("game_started"):
             break
@@ -341,5 +350,7 @@ def run_network_cli(client: QuoridorClient) -> None:
                 if current_state != state:
                     break
 
+    if not client.is_connected:
+        print("\n[!] A conexão com o servidor foi encerrada ou perdida.")
     client.disconnect()
     print("\nDesconectado do servidor.")

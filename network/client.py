@@ -167,6 +167,10 @@ class QuoridorClient:
         self.listeners: list[Callable[[str, Any], None]] = []
         self.is_connected = False
 
+        self._server_uri: str | None = None
+        self._heartbeat_thread: threading.Thread | None = None
+        self._heartbeat_stop_event = threading.Event()
+
     def add_listener(self, listener: Callable[[str, Any], None]) -> None:
         """Registra um ouvinte de eventos (ex: interface gráfica ou CLI).
 
@@ -260,8 +264,9 @@ class QuoridorClient:
             server_uri = f"PYRONAME:{self.server_name}@{self.ns_host}:{self.ns_port}"
         else:
             server_uri = f"PYRONAME:{self.server_name}"
+        self._server_uri = server_uri
         self.server_proxy = Pyro5.api.Proxy(server_uri)
-        self.server_proxy._pyroTimeout = 10.0
+        self.server_proxy._pyroTimeout = 2.5
 
         # 3. Registra o jogador no servidor enviando o URI de callback
         result = self.server_proxy.register_player(
@@ -273,12 +278,60 @@ class QuoridorClient:
             self.latest_state = result.get("game_state", {})
             self.is_connected = True
 
+        # Inicia o monitoramento de heartbeat em background
+        self._start_heartbeat()
+
         logger.info(
             "Conectado com sucesso ao servidor '%s'! Atribuído Player ID: %d",
             self.server_name,
             self.player_id,
         )
         return result
+
+    def _notify_connection_lost(self, reason: str = "") -> None:
+        """Notifica os ouvintes que a conexão com o servidor foi interrompida."""
+        with self._lock:
+            if not self.is_connected:
+                return
+            self.is_connected = False
+        logger.warning("Conexão com o servidor perdida: %s", reason)
+        self._handle_event("connection_lost", {"message": reason})
+
+    def _start_heartbeat(self) -> None:
+        """Inicializa a thread de verificação de liveness do servidor."""
+        self._heartbeat_stop_event.clear()
+        self._heartbeat_thread = threading.Thread(
+            target=self._heartbeat_loop,
+            daemon=True,
+            name=f"ClientHeartbeat-{self.player_name}",
+        )
+        self._heartbeat_thread.start()
+
+    def _heartbeat_loop(self) -> None:
+        """Pinga periodicamente o servidor para detectar quedas precocemente."""
+        if not self._server_uri:
+            return
+
+        try:
+            with Pyro5.api.Proxy(self._server_uri) as hb_proxy:
+                hb_proxy._pyroTimeout = 2.0
+                while not self._heartbeat_stop_event.wait(timeout=2.0):
+                    with self._lock:
+                        if not self.is_connected:
+                            break
+                    try:
+                        hb_proxy.ping()
+                    except Exception as exc:  # noqa: BLE001
+                        with self._lock:
+                            if not self.is_connected:
+                                break
+                        logger.warning("Heartbeat falhou ao contatar servidor: %s", exc)
+                        self._notify_connection_lost(
+                            f"Servidor inacessível ou desconectado: {exc}"
+                        )
+                        break
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("Aviso ao encerrar proxy do heartbeat: %s", exc)
 
     def _call_remote(self, method_name: str, *args: Any, **kwargs: Any) -> Any:
         """Executa uma chamada RPC thread-safe no proxy do servidor.
@@ -295,8 +348,26 @@ class QuoridorClient:
             if not self.server_proxy or not self.is_connected:
                 raise RuntimeError("Cliente não conectado ao servidor.")
             self.server_proxy._pyroClaimOwnership()
-            method = getattr(self.server_proxy, method_name)
+            proxy = self.server_proxy
+
+        try:
+            method = getattr(proxy, method_name)
             return method(*args, **kwargs)
+        except (
+            Pyro5.errors.CommunicationError,
+            Pyro5.errors.ConnectionClosedError,
+            Pyro5.errors.TimeoutError,
+            ConnectionRefusedError,
+            ConnectionResetError,
+            OSError,
+        ) as exc:
+            logger.error(
+                "Falha de comunicação RPC com o servidor (%s): %s", method_name, exc
+            )
+            self._notify_connection_lost(
+                f"Falha de comunicação ao executar '{method_name}': {exc}"
+            )
+            raise
 
     def _wait_for_state_sync(self, timeout: float = 1.0) -> None:
         """Aguarda a sincronização do estado local via callback ou recorre ao RPC de fallback.
@@ -305,6 +376,9 @@ class QuoridorClient:
         só retornem após o `latest_state` local ter sido devidamente atualizado.
         """
         if not self._state_event.wait(timeout=timeout):
+            with self._lock:
+                if not self.is_connected:
+                    return
             try:
                 fresh_state = self._call_remote("get_game_state")
                 with self._lock:
@@ -410,14 +484,17 @@ class QuoridorClient:
 
     def disconnect(self) -> None:
         """Desconecta do servidor e desliga o Daemon local de callbacks."""
+        self._heartbeat_stop_event.set()
         with self._lock:
-            if not self.is_connected:
+            if not self.is_connected and not self.server_proxy:
                 return
             self.is_connected = False
             player_id = self.player_id
             self.player_id = None
             proxy = self.server_proxy
+            self.server_proxy = None
             daemon = self.daemon
+            self.daemon = None
 
         logger.info("Desconectando cliente %s (ID %s)...", self.player_name, player_id)
 
@@ -425,6 +502,7 @@ class QuoridorClient:
         if proxy and player_id is not None:
             try:
                 proxy._pyroClaimOwnership()
+                proxy._pyroTimeout = 1.5
                 proxy.unregister_player(player_id)
             except Exception as exc:  # noqa: BLE001
                 logger.debug("Aviso ao desregistrar do servidor: %s", exc)
