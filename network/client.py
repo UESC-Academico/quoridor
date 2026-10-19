@@ -108,6 +108,18 @@ class GameClientCallback:
         """
         self.client._handle_event("error", {"message": message})
 
+    @Pyro5.api.oneway
+    def on_assigned_id(self, new_player_id: int) -> None:
+        """Callback acionado pelo servidor para sincronizar a alteração do ID do jogador local.
+
+        Args:
+            new_player_id: Novo ID atribuído pelo servidor.
+        """
+        with self.client._lock:
+            self.client.player_id = new_player_id
+        logger.info("ID do jogador atualizado pelo servidor para: %d", new_player_id)
+        self.client._handle_event("player_id_changed", {"player_id": new_player_id})
+
 
 class QuoridorClient:
     """Cliente Quoridor multiplayer com arquitetura de callbacks bidirecionais.

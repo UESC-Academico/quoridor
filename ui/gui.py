@@ -34,6 +34,7 @@ class QuoridorGUI:
         self.client = client
         self.is_network = client is not None
         self.my_player_id = client.player_id if client else None
+        self._title_dirty = False
 
         # 1. Configuração da Janela
         info = pygame.display.Info()
@@ -96,6 +97,10 @@ class QuoridorGUI:
             if self.client:
                 state = self.client.get_game_state()
                 self._apply_state(state)
+        elif event_type == "player_id_changed":
+            new_id = data.get("player_id") if isinstance(data, dict) else data
+            self.my_player_id = new_id
+            self._title_dirty = True
 
     def _apply_state(self, state: dict, message: str = "") -> None:
         """Aplica o dicionário de estado remoto na instância local do jogo.
@@ -116,6 +121,9 @@ class QuoridorGUI:
 
         if not is_started:
             self.game.winner = None
+            if self.client and self.client.player_id and self.my_player_id != self.client.player_id:
+                self.my_player_id = self.client.player_id
+                self._title_dirty = True
             return
 
         num_players = state.get("num_players", self.num_players)
@@ -884,6 +892,13 @@ class QuoridorGUI:
                 self.draw_board(mouse_pos)
                 self.draw_sidebars()
                 self.draw_hud()
+
+            if self._title_dirty:
+                self._title_dirty = False
+                if self.client and self.client.player_id:
+                    pygame.display.set_caption(
+                        f"Quoridor Multiplayer - {self.client.player_name} (P{self.client.player_id})"
+                    )
 
             pygame.display.flip()
             self.clock.tick(FPS)
