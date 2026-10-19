@@ -573,8 +573,6 @@ class QuoridorGUI:
                 border_color=(15, 17, 22),
                 border_width=3,
             )
-            label_surf = self.font_pawn.render(f"P{player.id}", True, (15, 17, 22))
-            self.screen.blit(label_surf, label_surf.get_rect(center=center))
 
     def draw_hud(self) -> None:
         """Renderiza o cabeçalho superior informando turno e feedback de status inferior."""
