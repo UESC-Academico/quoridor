@@ -105,9 +105,20 @@ class QuoridorServer:
                     elif self.game is None or not self.game.game_started:
                         self._reorganize_lobby_unlocked()
 
-            if game_over_event:
+                # Se todos os jogadores caíram ou saíram, reseta completamente o servidor para o lobby
+                if not self.callbacks:
+                    logger.info(
+                        "Todos os jogadores foram desconectados. "
+                        "Resetando o servidor para o estado inicial de espera."
+                    )
+                    self.game = None
+                    self.lobby.clear()
+                    game_over_event = None
+                    state_changed_event = None
+
+            if game_over_event and self.callbacks:
                 self._broadcast("on_game_over", *game_over_event)
-            if state_changed_event:
+            if state_changed_event and self.callbacks:
                 self._broadcast("on_game_state_changed", *state_changed_event)
 
     def _reorganize_lobby_unlocked(self) -> None:
@@ -187,6 +198,14 @@ class QuoridorServer:
             state = self._get_game_state_unlocked(msg)
             return state, msg, True
         else:
+            if not active_players or not self.callbacks:
+                msg = f"{player_name} {reason}. Não há mais jogadores ativos."
+                logger.info(msg)
+                self.game = None
+                self.lobby.clear()
+                state = self._get_game_state_unlocked(msg)
+                return state, msg, True
+
             current_turn = self.game.turn
             turn_name = (
                 self.game.players[current_turn].name
@@ -237,11 +256,31 @@ class QuoridorServer:
             raise ValueError("URI de callback obrigatória para conexão bidirecional.")
 
         with self.lock:
-            if self.game is not None and self.game.game_started:
-                raise ValueError("A partida já começou! Não é possível entrar agora.")
-
             # Purga do lobby qualquer entrada órfã antes de alocar novo ID
             self.lobby = [p for p in self.lobby if p["id"] in self.callbacks]
+
+            # 1. Se não há jogadores ativos conectados no servidor, reseta qualquer partida residual
+            if not self.callbacks:
+                if self.game is not None:
+                    logger.info(
+                        "Nenhum jogador conectado no servidor. Resetando estado do jogo para o lobby."
+                    )
+                    self.game = None
+
+            # 2. Se a partida anterior já terminou (tem um vencedor definido), reseta para o lobby
+            # para acomodar nova conexão e permitir o início de uma nova partida
+            elif self.game is not None and self.game.winner is not None:
+                logger.info(
+                    "Partida anterior já finalizada com vencedor (P%d). "
+                    "Resetando para o lobby para acomodar nova conexão.",
+                    self.game.winner,
+                )
+                self.game = None
+                self._reorganize_lobby_unlocked()
+
+            # 3. Se houver uma partida ativamente em andamento (sem vencedor), rejeita nova conexão
+            if self.game is not None and self.game.game_started and self.game.winner is None:
+                raise ValueError("A partida já começou! Não é possível entrar agora.")
 
             if len(self.lobby) >= self.max_players:
                 raise ValueError(
@@ -332,13 +371,22 @@ class QuoridorServer:
                         winner_name = self.game.players[winner].name
                         game_over_event = (winner, winner_name, state)
                 else:
-                    msg = f"Jogador {player_id} desconectou."
+                    msg = f"Jogador {removed_name or player_id} desconectou."
                     state = self._get_game_state_unlocked(msg)
             else:
                 self._reorganize_lobby_unlocked()
                 msg = f"Jogador {removed_name} saiu do lobby."
                 logger.info(msg)
                 state = self._get_game_state_unlocked(msg)
+
+            # Se todos os jogadores saíram do servidor, reseta completamente para o estado inicial
+            if not self.callbacks:
+                logger.info(
+                    "Todos os jogadores saíram. Servidor reiniciado para o estado inicial de espera."
+                )
+                self.game = None
+                self.lobby.clear()
+                return True, msg
 
         if game_over_event:
             self._broadcast("on_game_over", *game_over_event)
@@ -358,7 +406,7 @@ class QuoridorServer:
             Tupla (sucesso, mensagem_resultado).
         """
         with self.lock:
-            if self.game is not None and self.game.game_started:
+            if self.game is not None and self.game.game_started and self.game.winner is None:
                 return False, "A partida já está em andamento!"
 
             num_players = len(self.lobby)
